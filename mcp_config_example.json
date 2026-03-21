@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "bizops": {
+      "command": "python",
+      "args": ["-m", "bizops.mcp_server"],
+      "env": {
+        "PYTHONPATH": "/Users/pramodboddu/Documents/Projects/Bizops/bizops/src"
+      }
+    }
+  }
+}

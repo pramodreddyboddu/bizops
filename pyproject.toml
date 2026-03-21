@@ -1,0 +1,75 @@
+[project]
+name = "bizops"
+version = "0.1.0"
+description = "Agentic CLI for small business operations — invoices, expenses, P&L, and more."
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.11"
+authors = [
+    {name = "Pramod", email = "pramod@desidelightmarketplace.com"},
+]
+keywords = ["cli", "business", "invoices", "expenses", "automation", "agentic"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Office/Business :: Financial :: Accounting",
+]
+
+dependencies = [
+    "typer[all]>=0.12.0",
+    "rich>=13.0.0",
+    "google-api-python-client>=2.100.0",
+    "google-auth-httplib2>=0.2.0",
+    "google-auth-oauthlib>=1.2.0",
+    "openpyxl>=3.1.0",
+    "python-dateutil>=2.8.0",
+    "pydantic>=2.5.0",
+    "pydantic-settings>=2.1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-cov>=4.1.0",
+    "ruff>=0.1.0",
+    "mypy>=1.7.0",
+]
+agent = [
+    "anthropic>=0.40.0",
+    "mcp>=1.0.0",
+]
+
+[project.scripts]
+bizops = "bizops.cli:app"
+
+[project.urls]
+Homepage = "https://github.com/pramod/bizops"
+Repository = "https://github.com/pramod/bizops"
+Issues = "https://github.com/pramod/bizops/issues"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/bizops"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true

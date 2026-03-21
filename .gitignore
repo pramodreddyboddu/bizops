@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# BizOps data (don't commit credentials or business data)
+*.json
+!pyproject.toml
+!mcp_config_example.json
+credentials.json
+token.json
+bizops_config.json
+
+# Output files
+output/
+*.xlsx
+*.csv
+
+# Testing
+.coverage
+htmlcov/
+.pytest_cache/
+.mypy_cache/
+
+# Ruff
+.ruff_cache/
