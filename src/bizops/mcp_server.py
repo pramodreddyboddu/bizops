@@ -755,6 +755,57 @@ def get_cash_forecast(days_ahead: int = 14) -> str:
     return json.dumps(forecast, default=str, indent=2)
 
 
+@mcp.tool()
+def get_alerts(period: str = "month") -> str:
+    """Scan all business data for anomalies and proactive warnings.
+
+    Use this when the owner asks "anything I should worry about?", "any red flags?",
+    "check for problems", or wants a health check on spending, sales, or operations.
+
+    Checks: spending spikes by category, vendor cost jumps, sales anomalies,
+    missed vendor orders, prime cost ratio (food+labor), and large transactions.
+
+    Args:
+        period: Time period — "month" or "quarter".
+
+    Returns:
+        JSON with alerts sorted by severity (critical first), each with type, message, and source.
+    """
+    from bizops.parsers.alerts import AlertEngine
+
+    config = load_config()
+    start, end = _resolve_dates(period)
+
+    bank_txns = load_bank_transactions(config, start, end)
+    toast = load_toast_reports(config, start, end)
+    invoices = load_invoices(config, start, end)
+
+    # Previous period for comparison
+    from datetime import datetime as _dt
+    s = _dt.strptime(start, "%Y-%m-%d")
+    e = _dt.strptime(end, "%Y-%m-%d")
+    duration = (e - s).days
+    prev_end = s - timedelta(days=1)
+    prev_start = prev_end - timedelta(days=duration)
+
+    prev_bank = load_bank_transactions(config, prev_start.strftime("%Y-%m-%d"), prev_end.strftime("%Y-%m-%d"))
+    prev_toast = load_toast_reports(config, prev_start.strftime("%Y-%m-%d"), prev_end.strftime("%Y-%m-%d"))
+
+    engine = AlertEngine(config)
+    alerts = engine.scan_all(bank_txns, toast, invoices, prev_bank, prev_toast)
+
+    crit = sum(1 for a in alerts if a.get("severity") == "critical")
+    warn = sum(1 for a in alerts if a.get("severity") == "warning")
+    info = sum(1 for a in alerts if a.get("severity") == "info")
+
+    return json.dumps({
+        "period": {"start": start, "end": end},
+        "alert_count": len(alerts),
+        "summary": {"critical": crit, "warning": warn, "info": info},
+        "alerts": alerts,
+    }, default=str, indent=2)
+
+
 # ──────────────────────────────────────────────────────────────
 #  Resources
 # ──────────────────────────────────────────────────────────────

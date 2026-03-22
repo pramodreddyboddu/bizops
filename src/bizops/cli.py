@@ -4,6 +4,7 @@ import typer
 from rich.console import Console
 
 from bizops import __version__
+from bizops.commands.alerts import app as alerts_app
 from bizops.commands.ask import app as ask_app
 from bizops.commands.bank import app as bank_app
 from bizops.commands.briefing import app as briefing_app
@@ -33,6 +34,7 @@ app.add_typer(orders_app, name="orders", help="Smart ordering and purchase order
 app.add_typer(payments_app, name="payments", help="Vendor payment tracking, calendar, and cash forecast.")
 app.add_typer(labor_app, name="labor", help="Labor cost tracking and payroll analysis.")
 app.add_typer(briefing_app, name="briefing", help="Daily owner briefing — everything you need to know.")
+app.add_typer(alerts_app, name="alerts", help="Smart alerts — proactive anomaly detection.")
 app.add_typer(config_app, name="config", help="Configure Gmail, vendors, and paths.")
 app.add_typer(ask_app, name="ask", help="AI-powered business questions and insights.")
 

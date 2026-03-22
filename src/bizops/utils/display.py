@@ -661,6 +661,54 @@ def create_cash_forecast_panel(forecast: dict[str, Any]) -> Panel:
     )
 
 
+def create_alerts_panel(alerts: list[dict[str, Any]]) -> Panel:
+    """Create a Rich panel showing smart alerts sorted by severity."""
+    if not alerts:
+        return Panel(
+            "[dim]No alerts — everything looks good.[/dim]",
+            title="[bold]Smart Alerts[/bold]",
+            border_style="green",
+        )
+
+    severity_icons = {
+        "critical": "[bold red]!![/bold red]",
+        "warning": "[yellow]![/yellow]",
+        "info": "[dim]i[/dim]",
+    }
+    severity_colors = {
+        "critical": "red",
+        "warning": "yellow",
+        "info": "dim",
+    }
+
+    lines = []
+    current_severity = None
+    for a in alerts:
+        sev = a.get("severity", "info")
+        if sev != current_severity:
+            if current_severity is not None:
+                lines.append("")
+            label = sev.upper()
+            color = severity_colors.get(sev, "white")
+            lines.append(f"[bold {color}]-- {label} --[/bold {color}]")
+            current_severity = sev
+
+        icon = severity_icons.get(sev, "")
+        source = a.get("source", "")
+        source_tag = f" [dim]({source})[/dim]" if source else ""
+        lines.append(f"  {icon} {a.get('message', '')}{source_tag}")
+
+    # Summary line
+    crit_count = sum(1 for a in alerts if a.get("severity") == "critical")
+    warn_count = sum(1 for a in alerts if a.get("severity") == "warning")
+    info_count = sum(1 for a in alerts if a.get("severity") == "info")
+    lines.append("")
+    lines.append(f"[dim]{len(alerts)} total: {crit_count} critical, {warn_count} warning, {info_count} info[/dim]")
+
+    border = "red" if crit_count > 0 else "yellow" if warn_count > 0 else "green"
+    return Panel("\n".join(lines), title="[bold]Smart Alerts[/bold]", border_style=border)
+
+
 def get_spinner() -> Progress:
     """Get a consistent spinner for async operations."""
     return Progress(
