@@ -191,6 +191,177 @@ def load_expenses(
 
 
 # ──────────────────────────────────────────────────────────────
+#  Bank statement storage
+# ──────────────────────────────────────────────────────────────
+
+def _get_bank_storage_path(config: BizOpsConfig, year_month: str) -> Path:
+    """Get the JSON storage file path for bank transaction data."""
+    storage_dir = config.output_dir / "data"
+    storage_dir.mkdir(parents=True, exist_ok=True)
+    return storage_dir / f"bank_{year_month}.json"
+
+
+def save_bank_transactions(
+    config: BizOpsConfig,
+    transactions: list[dict[str, Any]],
+    year_month: str | None = None,
+) -> Path:
+    """Save bank transactions to local JSON storage.
+
+    Deduplicates by date + description + amount composite key.
+    """
+    if year_month is None:
+        year_month = datetime.now().strftime("%Y-%m")
+
+    path = _get_bank_storage_path(config, year_month)
+    existing = _load_json(path)
+
+    # Build dedup keys from existing
+    existing_keys = {
+        (t.get("date", ""), t.get("raw_description", ""), t.get("amount", 0))
+        for t in existing
+    }
+
+    for txn in transactions:
+        key = (txn.get("date", ""), txn.get("raw_description", ""), txn.get("amount", 0))
+        if key not in existing_keys:
+            existing.append(txn)
+            existing_keys.add(key)
+
+    _save_json(path, existing)
+    return path
+
+
+def load_bank_transactions(
+    config: BizOpsConfig,
+    start_date: str,
+    end_date: str,
+) -> list[dict[str, Any]]:
+    """Load bank transactions from local storage for a date range."""
+    start = datetime.strptime(start_date, "%Y-%m-%d")
+    end = datetime.strptime(end_date, "%Y-%m-%d")
+
+    all_txns: list[dict[str, Any]] = []
+    current = start.replace(day=1)
+    while current <= end:
+        year_month = current.strftime("%Y-%m")
+        path = _get_bank_storage_path(config, year_month)
+        all_txns.extend(_load_json(path))
+        if current.month == 12:
+            current = current.replace(year=current.year + 1, month=1)
+        else:
+            current = current.replace(month=current.month + 1)
+
+    return [
+        t for t in all_txns
+        if t.get("date") and start_date <= t["date"] <= end_date
+    ]
+
+
+# ──────────────────────────────────────────────────────────────
+#  Reconciliation storage
+# ──────────────────────────────────────────────────────────────
+
+def _get_reconciliation_storage_path(config: BizOpsConfig, year_month: str) -> Path:
+    """Get the JSON storage file path for reconciliation results."""
+    storage_dir = config.output_dir / "data"
+    storage_dir.mkdir(parents=True, exist_ok=True)
+    return storage_dir / f"reconciliation_{year_month}.json"
+
+
+def save_reconciliation(
+    config: BizOpsConfig,
+    result: dict[str, Any],
+    year_month: str | None = None,
+) -> Path:
+    """Save reconciliation result to local JSON storage."""
+    if year_month is None:
+        year_month = datetime.now().strftime("%Y-%m")
+
+    path = _get_reconciliation_storage_path(config, year_month)
+    _save_json_dict(path, result)
+    return path
+
+
+def load_reconciliation(
+    config: BizOpsConfig,
+    year_month: str,
+) -> dict[str, Any]:
+    """Load reconciliation result from local storage."""
+    path = _get_reconciliation_storage_path(config, year_month)
+    return _load_json_dict(path)
+
+
+# ──────────────────────────────────────────────────────────────
+#  Food cost storage
+# ──────────────────────────────────────────────────────────────
+
+def _get_food_cost_storage_path(config: BizOpsConfig, year_month: str) -> Path:
+    """Get the JSON storage file path for food cost data."""
+    storage_dir = config.output_dir / "data"
+    storage_dir.mkdir(parents=True, exist_ok=True)
+    return storage_dir / f"food_cost_{year_month}.json"
+
+
+def save_food_cost(
+    config: BizOpsConfig,
+    data: dict[str, Any],
+    year_month: str | None = None,
+) -> Path:
+    """Save food cost snapshot to local JSON storage."""
+    if year_month is None:
+        year_month = datetime.now().strftime("%Y-%m")
+    path = _get_food_cost_storage_path(config, year_month)
+    _save_json_dict(path, data)
+    return path
+
+
+def load_food_cost(
+    config: BizOpsConfig,
+    year_month: str,
+) -> dict[str, Any]:
+    """Load food cost snapshot from local storage."""
+    path = _get_food_cost_storage_path(config, year_month)
+    return _load_json_dict(path)
+
+
+# ──────────────────────────────────────────────────────────────
+#  Orders storage
+# ──────────────────────────────────────────────────────────────
+
+def _get_orders_storage_path(config: BizOpsConfig, year_month: str) -> Path:
+    """Get the JSON storage file path for generated orders."""
+    storage_dir = config.output_dir / "data"
+    storage_dir.mkdir(parents=True, exist_ok=True)
+    return storage_dir / f"orders_{year_month}.json"
+
+
+def save_orders(
+    config: BizOpsConfig,
+    orders: list[dict[str, Any]],
+    year_month: str | None = None,
+) -> Path:
+    """Save generated orders to local JSON storage."""
+    if year_month is None:
+        year_month = datetime.now().strftime("%Y-%m")
+    path = _get_orders_storage_path(config, year_month)
+
+    existing = _load_json(path)
+    existing.extend(orders)
+    _save_json(path, existing)
+    return path
+
+
+def load_orders(
+    config: BizOpsConfig,
+    year_month: str,
+) -> list[dict[str, Any]]:
+    """Load generated orders from local storage."""
+    path = _get_orders_storage_path(config, year_month)
+    return _load_json(path)
+
+
+# ──────────────────────────────────────────────────────────────
 #  Internal helpers
 # ──────────────────────────────────────────────────────────────
 

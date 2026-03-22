@@ -810,3 +810,409 @@ def export_pl_workbook(
 
     wb.save(output_path)
     return output_path
+
+
+# ──────────────────────────────────────────────────────────────
+#  Reconciliation workbook export
+# ──────────────────────────────────────────────────────────────
+
+def export_reconciliation_workbook(
+    result: dict[str, Any],
+    cash_flow: dict[str, Any],
+    config: Any,
+    output_path: Path | None = None,
+) -> Path:
+    """Export a multi-tab reconciliation Excel workbook.
+
+    Tabs:
+      1. Summary — match rate, totals, period info
+      2. Matched — side-by-side bank vs invoice
+      3. Unmatched Bank — bank transactions with no invoice match
+      4. Unmatched Invoices — invoices with no bank transaction
+      5. Cash Flow — all bank transactions categorized
+    """
+    if output_path is None:
+        month_str = datetime.now().strftime("%Y_%m")
+        filename = f"DD_RECONCILIATION_{month_str}.xlsx"
+        output_path = config.output_dir / filename
+
+    config.ensure_dirs()
+
+    wb = Workbook()
+    theme = "1565C0"  # Blue theme for bank/reconciliation
+    header_font, header_fill, header_alignment, thin_border = _get_styles(theme)
+
+    summary = result.get("summary", {})
+
+    # ── Tab 1: Summary ──
+    ws = wb.active
+    ws.title = "Summary"
+    ws.sheet_properties.tabColor = "1565C0"
+
+    ws.merge_cells("A1:C1")
+    t = ws.cell(row=1, column=1, value="Bank Reconciliation Summary")
+    t.font = Font(bold=True, size=16, color=theme)
+    t.alignment = Alignment(horizontal="center")
+
+    summary_rows = [
+        ("Total Bank Transactions", summary.get("total_bank_txns", 0)),
+        ("Total Invoices", summary.get("total_invoices", 0)),
+        ("Matched", summary.get("matched_count", 0)),
+        ("Match Rate", f"{summary.get('match_rate', 0):.1f}%"),
+        ("Unmatched Bank Txns", summary.get("unmatched_bank_count", 0)),
+        ("Unmatched Invoices", summary.get("unmatched_invoice_count", 0)),
+        ("", ""),
+        ("Total Bank Debits", summary.get("total_bank_debits", 0)),
+        ("Total Bank Credits", summary.get("total_bank_credits", 0)),
+        ("Net Bank Flow", summary.get("net_bank_flow", 0)),
+    ]
+
+    for i, (label, val) in enumerate(summary_rows, 3):
+        ws.cell(row=i, column=1, value=label).font = Font(bold=True)
+        cell = ws.cell(row=i, column=3, value=val)
+        if isinstance(val, (int, float)) and label and "Rate" not in label:
+            cell.number_format = '$#,##0.00' if isinstance(val, float) else '#,##0'
+
+    for col in range(1, 4):
+        ws.column_dimensions[get_column_letter(col)].width = 25
+
+    # ── Tab 2: Matched ──
+    ws_matched = wb.create_sheet("Matched")
+    ws_matched.sheet_properties.tabColor = "4CAF50"
+
+    ws_matched.merge_cells("A1:H1")
+    t = ws_matched.cell(row=1, column=1, value="Matched Transactions")
+    t.font = Font(bold=True, size=14, color="2E7D32")
+    t.alignment = Alignment(horizontal="center")
+
+    m_headers = ["Bank Date", "Bank Description", "Bank Amount",
+                 "Invoice Date", "Invoice Vendor", "Invoice Amount",
+                 "Match Type", "Score"]
+    for col, h in enumerate(m_headers, 1):
+        cell = ws_matched.cell(row=3, column=col, value=h)
+        cell.font = header_font
+        cell.fill = PatternFill(start_color="2E7D32", end_color="2E7D32", fill_type="solid")
+        cell.alignment = header_alignment
+        cell.border = thin_border
+
+    for row_idx, match in enumerate(result.get("matched", []), 4):
+        btxn = match.get("bank_txn", {})
+        inv = match.get("invoice", {})
+        ws_matched.cell(row=row_idx, column=1, value=btxn.get("date", "")).border = thin_border
+        ws_matched.cell(row=row_idx, column=2, value=btxn.get("description", "")).border = thin_border
+        c = ws_matched.cell(row=row_idx, column=3, value=abs(btxn.get("amount", 0)))
+        c.number_format = '$#,##0.00'
+        c.border = thin_border
+        ws_matched.cell(row=row_idx, column=4, value=inv.get("date", "")).border = thin_border
+        ws_matched.cell(row=row_idx, column=5, value=inv.get("vendor", "")).border = thin_border
+        c = ws_matched.cell(row=row_idx, column=6, value=inv.get("amount", 0))
+        c.number_format = '$#,##0.00'
+        c.border = thin_border
+        ws_matched.cell(row=row_idx, column=7, value=match.get("match_type", "")).border = thin_border
+        c = ws_matched.cell(row=row_idx, column=8, value=match.get("match_score", 0))
+        c.number_format = '0.000'
+        c.border = thin_border
+
+    for col in range(1, 9):
+        ws_matched.column_dimensions[get_column_letter(col)].width = 18
+
+    # ── Tab 3: Unmatched Bank ──
+    ws_ubank = wb.create_sheet("Unmatched Bank")
+    ws_ubank.sheet_properties.tabColor = "FF9800"
+
+    ws_ubank.merge_cells("A1:F1")
+    t = ws_ubank.cell(row=1, column=1, value="Unmatched Bank Transactions (not in email)")
+    t.font = Font(bold=True, size=14, color="E65100")
+    t.alignment = Alignment(horizontal="center")
+
+    ub_headers = ["Date", "Description", "Amount", "Type", "Category", "Source"]
+    for col, h in enumerate(ub_headers, 1):
+        cell = ws_ubank.cell(row=3, column=col, value=h)
+        cell.font = header_font
+        cell.fill = PatternFill(start_color="E65100", end_color="E65100", fill_type="solid")
+        cell.alignment = header_alignment
+        cell.border = thin_border
+
+    for row_idx, txn in enumerate(result.get("unmatched_bank", []), 4):
+        ws_ubank.cell(row=row_idx, column=1, value=txn.get("date", "")).border = thin_border
+        ws_ubank.cell(row=row_idx, column=2, value=txn.get("description", "")).border = thin_border
+        c = ws_ubank.cell(row=row_idx, column=3, value=txn.get("amount", 0))
+        c.number_format = '$#,##0.00'
+        c.border = thin_border
+        ws_ubank.cell(row=row_idx, column=4, value=txn.get("type", "")).border = thin_border
+        ws_ubank.cell(row=row_idx, column=5,
+                       value=(txn.get("category") or "").replace("_", " ").title()).border = thin_border
+        ws_ubank.cell(row=row_idx, column=6, value=txn.get("source_file", "")).border = thin_border
+
+    for col in range(1, 7):
+        ws_ubank.column_dimensions[get_column_letter(col)].width = 20
+
+    # ── Tab 4: Unmatched Invoices ──
+    ws_uinv = wb.create_sheet("Unmatched Invoices")
+    ws_uinv.sheet_properties.tabColor = "9C27B0"
+
+    ws_uinv.merge_cells("A1:E1")
+    t = ws_uinv.cell(row=1, column=1, value="Unmatched Invoices (not in bank)")
+    t.font = Font(bold=True, size=14, color="6A1B9A")
+    t.alignment = Alignment(horizontal="center")
+
+    ui_headers = ["Date", "Vendor", "Amount", "Subject", "Category"]
+    for col, h in enumerate(ui_headers, 1):
+        cell = ws_uinv.cell(row=3, column=col, value=h)
+        cell.font = header_font
+        cell.fill = PatternFill(start_color="6A1B9A", end_color="6A1B9A", fill_type="solid")
+        cell.alignment = header_alignment
+        cell.border = thin_border
+
+    for row_idx, inv in enumerate(result.get("unmatched_invoices", []), 4):
+        ws_uinv.cell(row=row_idx, column=1, value=inv.get("date", "")).border = thin_border
+        ws_uinv.cell(row=row_idx, column=2, value=inv.get("vendor", "")).border = thin_border
+        c = ws_uinv.cell(row=row_idx, column=3, value=inv.get("amount", 0))
+        c.number_format = '$#,##0.00'
+        c.border = thin_border
+        ws_uinv.cell(row=row_idx, column=4, value=(inv.get("subject") or "")[:50]).border = thin_border
+        ws_uinv.cell(row=row_idx, column=5, value=inv.get("category", "")).border = thin_border
+
+    for col in range(1, 6):
+        ws_uinv.column_dimensions[get_column_letter(col)].width = 20
+
+    # ── Tab 5: Cash Flow ──
+    ws_cf = wb.create_sheet("Cash Flow")
+    ws_cf.sheet_properties.tabColor = "2F5233"
+
+    ws_cf.merge_cells("A1:D1")
+    t = ws_cf.cell(row=1, column=1, value="Complete Cash Flow (from Bank)")
+    t.font = Font(bold=True, size=16, color="2F5233")
+    t.alignment = Alignment(horizontal="center")
+
+    row = 3
+    # Income section
+    ws_cf.cell(row=row, column=1, value="INCOME").font = Font(bold=True, size=13, color="006600")
+    row += 1
+    for cat, data in sorted(
+        cash_flow.get("income", {}).items(),
+        key=lambda x: x[1]["total"], reverse=True,
+    ):
+        ws_cf.cell(row=row, column=1, value=f"  {cat.replace('_', ' ').title()}")
+        ws_cf.cell(row=row, column=2, value=data.get("count", 0))
+        c = ws_cf.cell(row=row, column=3, value=data.get("total", 0))
+        c.number_format = '$#,##0.00'
+        c.font = Font(color="006600")
+        row += 1
+
+    total_in = cash_flow.get("total_income", 0)
+    ws_cf.cell(row=row, column=1, value="Total Income").font = Font(bold=True, size=12)
+    c = ws_cf.cell(row=row, column=3, value=total_in)
+    c.font = Font(bold=True, size=12, color="006600")
+    c.number_format = '$#,##0.00'
+    row += 2
+
+    # Expenses section
+    ws_cf.cell(row=row, column=1, value="EXPENSES").font = Font(bold=True, size=13, color="CC0000")
+    row += 1
+    for cat, data in sorted(
+        cash_flow.get("expenses", {}).items(),
+        key=lambda x: x[1]["total"],
+    ):
+        ws_cf.cell(row=row, column=1, value=f"  {cat.replace('_', ' ').title()}")
+        ws_cf.cell(row=row, column=2, value=data.get("count", 0))
+        c = ws_cf.cell(row=row, column=3, value=abs(data.get("total", 0)))
+        c.number_format = '$#,##0.00'
+        c.font = Font(color="CC0000")
+        row += 1
+
+    total_out = cash_flow.get("total_expenses", 0)
+    ws_cf.cell(row=row, column=1, value="Total Expenses").font = Font(bold=True, size=12)
+    c = ws_cf.cell(row=row, column=3, value=abs(total_out))
+    c.font = Font(bold=True, size=12, color="CC0000")
+    c.number_format = '$#,##0.00'
+    row += 2
+
+    # Net
+    net = cash_flow.get("net_cash_flow", 0)
+    ws_cf.cell(row=row, column=1, value="NET CASH FLOW").font = Font(bold=True, size=14)
+    np_color = "006600" if net >= 0 else "CC0000"
+    c = ws_cf.cell(row=row, column=3, value=net)
+    c.font = Font(bold=True, size=14, color=np_color)
+    c.number_format = '$#,##0.00'
+
+    for col in range(1, 5):
+        ws_cf.column_dimensions[get_column_letter(col)].width = 25
+
+    wb.save(output_path)
+    return output_path
+
+
+# ──────────────────────────────────────────────────────────────
+#  Purchase order export
+# ──────────────────────────────────────────────────────────────
+
+def export_order_sheet(
+    order: dict[str, Any],
+    config: Any,
+    output_path: Path | None = None,
+) -> Path:
+    """Export a vendor-ready purchase order to Excel."""
+    vendor = order.get("vendor", "Unknown")
+    safe_vendor = re.sub(r'[^a-zA-Z0-9]', '_', vendor)
+
+    if output_path is None:
+        date_str = datetime.now().strftime("%Y_%m_%d")
+        filename = f"PO_{safe_vendor}_{date_str}.xlsx"
+        config.ensure_dirs()
+        output_path = config.output_dir / filename
+
+    wb = Workbook()
+    theme = "2F5233"
+    header_font, header_fill, header_alignment, thin_border = _get_styles(theme)
+
+    ws = wb.active
+    ws.title = "Purchase Order"
+    ws.sheet_properties.tabColor = theme
+
+    # Header
+    ws.merge_cells("A1:G1")
+    t = ws.cell(row=1, column=1, value="PURCHASE ORDER - Desi Delight")
+    t.font = Font(bold=True, size=18, color=theme)
+    t.alignment = Alignment(horizontal="center")
+
+    ws.cell(row=3, column=1, value="Vendor:").font = Font(bold=True)
+    ws.cell(row=3, column=2, value=vendor).font = Font(bold=True, size=12)
+    ws.cell(row=4, column=1, value="Date:").font = Font(bold=True)
+    ws.cell(row=4, column=2, value=datetime.now().strftime("%B %d, %Y"))
+    ws.cell(row=5, column=1, value="PO #:").font = Font(bold=True)
+    ws.cell(row=5, column=2, value=f"PO-{datetime.now().strftime('%Y%m%d')}-{safe_vendor[:8]}")
+
+    # Item table
+    po_headers = ["#", "Product", "SKU", "Qty", "Unit", "Unit Cost", "Line Total"]
+    for col, h in enumerate(po_headers, 1):
+        cell = ws.cell(row=7, column=col, value=h)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = header_alignment
+        cell.border = thin_border
+
+    items = order.get("items", [])
+    for i, item in enumerate(items, 1):
+        row = 7 + i
+        ws.cell(row=row, column=1, value=i).border = thin_border
+        ws.cell(row=row, column=2, value=item.get("product_name", "")).border = thin_border
+        ws.cell(row=row, column=3, value=item.get("sku", "")).border = thin_border
+        c = ws.cell(row=row, column=4, value=item.get("quantity", 0))
+        c.border = thin_border
+        ws.cell(row=row, column=5, value=item.get("unit", "")).border = thin_border
+        c = ws.cell(row=row, column=6, value=item.get("unit_cost", 0))
+        c.number_format = '$#,##0.00'
+        c.border = thin_border
+        c = ws.cell(row=row, column=7, value=item.get("line_total", 0))
+        c.number_format = '$#,##0.00'
+        c.border = thin_border
+
+    # Subtotal row
+    total_row = 8 + len(items)
+    ws.cell(row=total_row, column=5, value="SUBTOTAL:").font = Font(bold=True, size=12)
+    c = ws.cell(row=total_row, column=7, value=order.get("order_total", 0))
+    c.font = Font(bold=True, size=12, color=theme)
+    c.number_format = '$#,##0.00'
+
+    # Column widths
+    widths = [5, 30, 12, 8, 8, 12, 14]
+    for i, w in enumerate(widths, 1):
+        ws.column_dimensions[get_column_letter(i)].width = w
+
+    wb.save(output_path)
+    return output_path
+
+
+def export_food_cost_report(
+    food_cost_data: dict[str, Any],
+    trend_data: list[dict[str, Any]],
+    config: Any,
+    output_path: Path | None = None,
+) -> Path:
+    """Export food cost analytics to Excel — 2 sheets: Breakdown + Trend."""
+    if output_path is None:
+        month_str = datetime.now().strftime("%Y_%m")
+        filename = f"DD_FOOD_COST_{month_str}.xlsx"
+        config.ensure_dirs()
+        output_path = config.output_dir / filename
+
+    wb = Workbook()
+    theme = "2F5233"
+    header_font, header_fill, header_alignment, thin_border = _get_styles(theme)
+
+    # ── Sheet 1: Food Cost ──
+    ws = wb.active
+    ws.title = "Food Cost"
+    ws.sheet_properties.tabColor = theme
+
+    ws.merge_cells("A1:D1")
+    t = ws.cell(row=1, column=1, value="Food Cost Analysis")
+    t.font = Font(bold=True, size=16, color=theme)
+    t.alignment = Alignment(horizontal="center")
+
+    pct = food_cost_data.get("food_cost_pct", 0)
+    status = food_cost_data.get("status", "healthy")
+    status_color = {"healthy": "006600", "warning": "CC6600", "critical": "CC0000"}.get(status, "000000")
+
+    ws.cell(row=3, column=1, value="Food Cost %:").font = Font(bold=True, size=14)
+    ws.cell(row=3, column=2, value=f"{pct}%").font = Font(bold=True, size=14, color=status_color)
+    ws.cell(row=4, column=1, value="Status:").font = Font(bold=True)
+    ws.cell(row=4, column=2, value=status.upper()).font = Font(color=status_color)
+    ws.cell(row=5, column=1, value="Net Sales:").font = Font(bold=True)
+    c = ws.cell(row=5, column=2, value=food_cost_data.get("net_sales", 0))
+    c.number_format = '$#,##0.00'
+    ws.cell(row=6, column=1, value="Food Expenses:").font = Font(bold=True)
+    c = ws.cell(row=6, column=2, value=food_cost_data.get("food_cost_total", 0))
+    c.number_format = '$#,##0.00'
+
+    cat_headers = ["Category", "Amount", "% of Sales"]
+    for col, h in enumerate(cat_headers, 1):
+        cell = ws.cell(row=8, column=col, value=h)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = header_alignment
+
+    by_cat = food_cost_data.get("by_category", {})
+    row_num = 9
+    for cat, info in sorted(by_cat.items(), key=lambda x: x[1].get("total", 0), reverse=True):
+        if info.get("total", 0) > 0:
+            ws.cell(row=row_num, column=1, value=cat.replace("_", " ").title())
+            c = ws.cell(row=row_num, column=2, value=info["total"])
+            c.number_format = '$#,##0.00'
+            ws.cell(row=row_num, column=3, value=f"{info.get('pct', 0)}%")
+            row_num += 1
+
+    for col in range(1, 5):
+        ws.column_dimensions[get_column_letter(col)].width = 20
+
+    # ── Sheet 2: Trend ──
+    ws_trend = wb.create_sheet("Trend")
+    ws_trend.sheet_properties.tabColor = "1565C0"
+
+    ws_trend.merge_cells("A1:E1")
+    t = ws_trend.cell(row=1, column=1, value="Food Cost Trend")
+    t.font = Font(bold=True, size=16, color="1565C0")
+    t.alignment = Alignment(horizontal="center")
+
+    trend_headers = ["Month", "Net Sales", "Food Cost", "Food Cost %", "Status"]
+    for col, h in enumerate(trend_headers, 1):
+        cell = ws_trend.cell(row=3, column=col, value=h)
+        cell.font = header_font
+        cell.fill = PatternFill(start_color="1565C0", end_color="1565C0", fill_type="solid")
+        cell.alignment = header_alignment
+
+    for i, snap in enumerate(trend_data, 4):
+        ws_trend.cell(row=i, column=1, value=snap.get("month", ""))
+        c = ws_trend.cell(row=i, column=2, value=snap.get("net_sales", 0))
+        c.number_format = '$#,##0.00'
+        c = ws_trend.cell(row=i, column=3, value=snap.get("food_cost_total", 0))
+        c.number_format = '$#,##0.00'
+        ws_trend.cell(row=i, column=4, value=f"{snap.get('food_cost_pct', 0)}%")
+        ws_trend.cell(row=i, column=5, value=snap.get("status", "").upper())
+
+    for col in range(1, 6):
+        ws_trend.column_dimensions[get_column_letter(col)].width = 18
+
+    wb.save(output_path)
+    return output_path

@@ -15,7 +15,15 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 
 from bizops.utils.config import ExpenseCategory, load_config
-from bizops.utils.storage import load_expenses, load_invoices, load_toast_reports
+from bizops.utils.storage import (
+    load_bank_transactions,
+    load_expenses,
+    load_food_cost,
+    load_invoices,
+    load_orders,
+    load_reconciliation,
+    load_toast_reports,
+)
 
 # ──────────────────────────────────────────────────────────────
 #  Server setup
@@ -323,6 +331,295 @@ def list_vendors() -> str:
     }, indent=2)
 
 
+@mcp.tool()
+def get_bank_transactions(
+    period: str = "month",
+    type_filter: str | None = None,
+    category: str | None = None,
+) -> str:
+    """Get bank transactions, optionally filtered by type or category.
+
+    Args:
+        period: Time period — "today", "week", "month", or "quarter".
+        type_filter: Optional filter — "credit", "debit", or None for all.
+        category: Optional category filter (case-insensitive partial match).
+
+    Returns:
+        JSON string with bank transactions and summary.
+    """
+    config = load_config()
+    start, end = _resolve_dates(period)
+    txns = load_bank_transactions(config, start, end)
+
+    if type_filter:
+        txns = [t for t in txns if t.get("type") == type_filter]
+
+    if category:
+        cat_lower = category.lower()
+        txns = [t for t in txns if cat_lower in (t.get("category") or "").lower()]
+
+    total_debits = sum(t.get("amount", 0) for t in txns if t.get("type") == "debit")
+    total_credits = sum(t.get("amount", 0) for t in txns if t.get("type") == "credit")
+
+    return json.dumps({
+        "period": {"start": start, "end": end},
+        "count": len(txns),
+        "total_debits": round(total_debits, 2),
+        "total_credits": round(total_credits, 2),
+        "net_flow": round(total_debits + total_credits, 2),
+        "transactions": txns[:100],
+    }, default=str, indent=2)
+
+
+@mcp.tool()
+def get_reconciliation(period: str = "month") -> str:
+    """Get reconciliation results — matched and unmatched transactions.
+
+    Args:
+        period: Time period — "today", "week", "month", or "quarter".
+
+    Returns:
+        JSON with match rate, unmatched bank items (hidden expenses), and unmatched invoices.
+    """
+    config = load_config()
+    start, end = _resolve_dates(period)
+    year_month = start[:7]
+
+    result = load_reconciliation(config, year_month)
+
+    if not result:
+        return json.dumps({
+            "period": {"start": start, "end": end},
+            "message": "No reconciliation data found. Run 'bizops bank reconcile' first.",
+        }, indent=2)
+
+    summary = result.get("summary", {})
+    unmatched_bank = result.get("unmatched_bank", [])
+
+    # Summarize hidden expenses by category
+    hidden_by_cat: dict[str, dict[str, Any]] = defaultdict(
+        lambda: {"total": 0.0, "count": 0}
+    )
+    for txn in unmatched_bank:
+        if txn.get("type") == "debit":
+            cat = txn.get("category", "uncategorized")
+            hidden_by_cat[cat]["total"] += abs(txn.get("amount", 0))
+            hidden_by_cat[cat]["count"] += 1
+
+    return json.dumps({
+        "period": {"start": start, "end": end},
+        "summary": summary,
+        "hidden_expenses": {
+            k: {"total": round(v["total"], 2), "count": v["count"]}
+            for k, v in sorted(hidden_by_cat.items(), key=lambda x: -x[1]["total"])
+        },
+        "unmatched_invoice_count": len(result.get("unmatched_invoices", [])),
+    }, default=str, indent=2)
+
+
+@mcp.tool()
+def get_cash_flow(period: str = "month") -> str:
+    """Get complete cash flow from bank data — every dollar in and out, categorized.
+
+    Args:
+        period: Time period — "today", "week", "month", or "quarter".
+
+    Returns:
+        JSON with income and expense categories, totals, and net cash flow.
+    """
+    from bizops.parsers.reconciliation import ReconciliationEngine
+
+    config = load_config()
+    start, end = _resolve_dates(period)
+    txns = load_bank_transactions(config, start, end)
+
+    if not txns:
+        return json.dumps({
+            "period": {"start": start, "end": end},
+            "message": "No bank data found. Run 'bizops bank import' first.",
+        }, indent=2)
+
+    engine = ReconciliationEngine(config)
+    cash_flow = engine.get_cash_flow(txns)
+
+    # Simplify for response — remove individual transactions
+    income_summary = {
+        k: {"total": round(v["total"], 2), "count": v["count"]}
+        for k, v in cash_flow.get("income", {}).items()
+    }
+    expense_summary = {
+        k: {"total": round(abs(v["total"]), 2), "count": v["count"]}
+        for k, v in cash_flow.get("expenses", {}).items()
+    }
+
+    return json.dumps({
+        "period": {"start": start, "end": end},
+        "income": income_summary,
+        "expenses": expense_summary,
+        "total_income": round(cash_flow.get("total_income", 0), 2),
+        "total_expenses": round(abs(cash_flow.get("total_expenses", 0)), 2),
+        "net_cash_flow": round(cash_flow.get("net_cash_flow", 0), 2),
+        "transaction_count": cash_flow.get("transaction_count", 0),
+    }, default=str, indent=2)
+
+
+@mcp.tool()
+def get_food_cost(period: str = "month") -> str:
+    """Get food cost percentage and category breakdown.
+
+    Args:
+        period: Time period — "today", "week", "month", or "quarter".
+
+    Returns:
+        JSON with food cost %, net sales, food expenses, per-category breakdown, and status.
+    """
+    from bizops.parsers.food_cost import FoodCostEngine
+
+    config = load_config()
+    start, end = _resolve_dates(period)
+    year_month = start[:7]
+
+    # Try loading saved food cost data
+    fc_data = load_food_cost(config, year_month)
+    if fc_data:
+        return json.dumps({
+            "period": {"start": start, "end": end},
+            **fc_data,
+        }, default=str, indent=2)
+
+    # Calculate from expense + toast data
+    expenses = load_expenses(config, year_month)
+    toast = load_toast_reports(config, start, end)
+
+    if not expenses and not toast:
+        return json.dumps({
+            "period": {"start": start, "end": end},
+            "message": "No data found. Run 'bizops expenses track' first.",
+        }, indent=2)
+
+    engine = FoodCostEngine(config)
+    fc_data = engine.calculate_food_cost(expenses or {}, toast)
+
+    return json.dumps({
+        "period": {"start": start, "end": end},
+        **fc_data,
+    }, default=str, indent=2)
+
+
+@mcp.tool()
+def get_food_cost_trend(months: int = 3) -> str:
+    """Get month-over-month food cost trend.
+
+    Args:
+        months: Number of months to compare (default 3).
+
+    Returns:
+        JSON with monthly snapshots including food cost %, trend direction.
+    """
+    from bizops.parsers.food_cost import FoodCostEngine
+
+    config = load_config()
+    engine = FoodCostEngine(config)
+    snapshots = engine.month_over_month(months)
+
+    return json.dumps({
+        "months_analyzed": months,
+        "snapshots": snapshots,
+    }, default=str, indent=2)
+
+
+@mcp.tool()
+def get_order_recommendation(vendor: str | None = None) -> str:
+    """Get recommended purchase orders based on sales and par levels.
+
+    Args:
+        vendor: Specific vendor name, or None for all vendors.
+
+    Returns:
+        JSON with recommended orders, quantities, totals, and budget impact.
+    """
+    from bizops.parsers.ordering import OrderingEngine
+
+    config = load_config()
+    start, end = _resolve_dates("month")
+    toast = load_toast_reports(config, start, end)
+
+    engine = OrderingEngine(config)
+
+    if vendor:
+        order = engine.generate_order(vendor, toast)
+        return json.dumps(order, default=str, indent=2)
+
+    orders = engine.generate_all_orders(toast)
+    if not orders:
+        return json.dumps({
+            "message": "No vendors have products with par levels. Use 'bizops orders add-product' to set up.",
+        }, indent=2)
+
+    return json.dumps({
+        "order_count": len(orders),
+        "grand_total": round(sum(o.get("order_total", 0) for o in orders), 2),
+        "orders": orders,
+    }, default=str, indent=2)
+
+
+@mcp.tool()
+def get_ordering_budget() -> str:
+    """Get available budget for ordering based on sales projections.
+
+    Returns:
+        JSON with projected sales, food budget, spending to date, and remaining budget.
+    """
+    from bizops.parsers.ordering import OrderingEngine
+
+    config = load_config()
+    start, end = _resolve_dates("month")
+    toast = load_toast_reports(config, start, end)
+
+    engine = OrderingEngine(config)
+    budget = engine.get_available_budget(toast)
+
+    return json.dumps(budget, default=str, indent=2)
+
+
+@mcp.tool()
+def get_product_catalog(vendor: str | None = None) -> str:
+    """Get product catalog for a vendor or all vendors.
+
+    Args:
+        vendor: Specific vendor name, or None for all vendors with products.
+
+    Returns:
+        JSON with vendor product catalogs.
+    """
+    config = load_config()
+
+    if vendor:
+        vendor_lower = vendor.lower()
+        for vc in config.vendors:
+            if vc.name.lower() == vendor_lower:
+                return json.dumps({
+                    "vendor": vc.name,
+                    "products": [p.model_dump() for p in vc.products],
+                    "product_count": len(vc.products),
+                }, default=str, indent=2)
+        return json.dumps({"error": f"Vendor '{vendor}' not found."}, indent=2)
+
+    catalogs = []
+    for vc in config.vendors:
+        if vc.products:
+            catalogs.append({
+                "vendor": vc.name,
+                "products": [p.model_dump() for p in vc.products],
+                "product_count": len(vc.products),
+            })
+
+    return json.dumps({
+        "vendor_count": len(catalogs),
+        "catalogs": catalogs,
+    }, default=str, indent=2)
+
+
 # ──────────────────────────────────────────────────────────────
 #  Resources
 # ──────────────────────────────────────────────────────────────
@@ -354,11 +651,16 @@ def get_status_resource() -> str:
     toast = load_toast_reports(config, start, end)
     expenses = load_expenses(config, year_month)
 
+    bank_txns = load_bank_transactions(config, start, end)
+    reconciliation = load_reconciliation(config, year_month)
+
     return json.dumps({
         "current_month": year_month,
         "invoices_count": len(invoices),
         "toast_reports_count": len(toast),
         "has_expense_data": bool(expenses),
+        "bank_transactions_count": len(bank_txns),
+        "has_reconciliation_data": bool(reconciliation),
         "data_directory": str(config.output_dir / "data"),
     }, indent=2)
 

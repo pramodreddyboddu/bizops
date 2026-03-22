@@ -89,6 +89,38 @@ DEFAULT_BASE_DIR = Path.home() / "Documents" / "BizOps"
 DEFAULT_CONFIG_PATH = DEFAULT_BASE_DIR / "bizops_config.json"
 
 
+class ProductItem(BaseModel):
+    """A product in a vendor's catalog for ordering."""
+
+    name: str
+    sku: str = ""
+    unit: str = "each"
+    unit_cost: float = 0.0
+    par_level: float = 0.0
+    order_multiple: float = 1.0
+    category: str = "food_supplies"
+    active: bool = True
+
+
+class OrderTemplate(BaseModel):
+    """Recurring order template for a vendor."""
+
+    vendor_name: str
+    items: list[dict] = Field(default_factory=list)  # [{product_name, quantity}]
+    frequency: str = "weekly"  # weekly, biweekly, monthly
+    day_of_week: int = 1  # 0=Mon..6=Sun
+    last_generated: str = ""
+    enabled: bool = True
+
+
+class FoodCostBudget(BaseModel):
+    """Budget thresholds for food cost alerts."""
+
+    target_food_cost_pct: float = 30.0
+    alert_threshold_pct: float = 35.0
+    category_budgets: dict[str, float] = Field(default_factory=dict)
+
+
 class VendorConfig(BaseModel):
     """A known vendor for invoice matching."""
 
@@ -96,6 +128,9 @@ class VendorConfig(BaseModel):
     email_patterns: list[str] = Field(default_factory=list)
     category: str = "uncategorized"
     aliases: list[str] = Field(default_factory=list)
+    products: list[ProductItem] = Field(default_factory=list)
+    order_day: int = -1  # preferred order day (-1 = any)
+    lead_time_days: int = 1
 
     def matches_email(self, sender: str) -> bool:
         """Check if an email sender matches this vendor."""
@@ -125,6 +160,10 @@ class BizOpsConfig(BaseSettings):
 
     # Expense categorization (Phase 2)
     category_keywords: CategoryKeywords = Field(default_factory=CategoryKeywords)
+
+    # Ordering & food cost
+    order_templates: list[OrderTemplate] = Field(default_factory=list)
+    food_cost_budget: FoodCostBudget = Field(default_factory=FoodCostBudget)
 
     # Excel output
     excel_template: str = "default"
