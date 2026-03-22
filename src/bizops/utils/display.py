@@ -709,6 +709,103 @@ def create_alerts_panel(alerts: list[dict[str, Any]]) -> Panel:
     return Panel("\n".join(lines), title="[bold]Smart Alerts[/bold]", border_style=border)
 
 
+def create_pl_trend_table(data: dict[str, Any]) -> Table:
+    """Create a Rich table for month-over-month P&L trends."""
+    table = Table(title="P&L Trend", show_header=True, header_style="bold cyan")
+    table.add_column("Month", style="cyan", width=10)
+    table.add_column("Revenue", justify="right", width=12)
+    table.add_column("Expenses", justify="right", width=12)
+    table.add_column("Net Profit", justify="right", width=12)
+    table.add_column("Margin", justify="right", width=8)
+    table.add_column("Trend", width=8)
+
+    arrows = {"up": "[green]^[/green]", "down": "[red]v[/red]", "flat": "[dim]-[/dim]"}
+
+    for snap in data.get("snapshots", []):
+        profit = snap.get("net_profit", 0)
+        margin = snap.get("net_profit_pct", 0)
+        profit_color = "green" if profit >= 0 else "red"
+
+        table.add_row(
+            snap["month"],
+            f"${snap['net_sales']:,.0f}" if snap["net_sales"] else "[dim]--[/dim]",
+            f"${snap['total_expenses']:,.0f}" if snap["total_expenses"] else "[dim]--[/dim]",
+            f"[{profit_color}]${profit:,.0f}[/{profit_color}]" if snap["net_sales"] else "[dim]--[/dim]",
+            f"{margin}%" if snap["net_sales"] else "[dim]--[/dim]",
+            arrows.get(snap.get("profit_trend", "flat"), "-"),
+        )
+
+    # Averages row
+    avgs = data.get("averages", {})
+    if avgs.get("avg_monthly_revenue", 0):
+        table.add_row(
+            "[bold]AVG[/bold]",
+            f"[bold]${avgs['avg_monthly_revenue']:,.0f}[/bold]",
+            f"[bold]${avgs['avg_monthly_expenses']:,.0f}[/bold]",
+            "",
+            f"[bold]{avgs['avg_net_profit_pct']}%[/bold]",
+            "",
+        )
+
+    return table
+
+
+def create_benchmark_panel(data: dict[str, Any]) -> Panel:
+    """Create a Rich panel showing business metrics vs industry benchmarks."""
+    lines = []
+    grade_colors = {"A": "green", "B": "cyan", "C": "yellow", "D": "red", "F": "red"}
+
+    overall = data.get("overall_grade", "N/A")
+    overall_color = grade_colors.get(overall, "white")
+    lines.append(f"[bold {overall_color}]Overall Grade: {overall}[/bold {overall_color}]")
+    lines.append(f"[dim]{data.get('benchmarks_source', '')}[/dim]")
+    lines.append("")
+
+    for m in data.get("metrics", []):
+        grade = m.get("grade", "N/A")
+        color = grade_colors.get(grade, "white")
+        benchmark = m.get("benchmark", {})
+        target = benchmark.get("target", 0)
+        lines.append(
+            f"  [{color}]{grade}[/{color}]  {m['name']:<16} "
+            f"[bold]{m['value']}%[/bold]  "
+            f"[dim](target: {target}%)[/dim]"
+        )
+
+    border = overall_color
+    return Panel("\n".join(lines), title="[bold]Business Benchmarks[/bold]", border_style=border)
+
+
+def create_forecast_panel(data: dict[str, Any]) -> Panel:
+    """Create a Rich panel showing revenue forecast."""
+    lines = []
+    confidence = data.get("confidence", "no_data")
+    conf_color = {"high": "green", "medium": "yellow", "low": "red", "no_data": "dim"}.get(confidence, "white")
+
+    lines.append(f"[bold blue]-- REVENUE FORECAST --[/bold blue]")
+    lines.append(f"  Projected Daily:   [bold]${data.get('projected_daily', 0):>10,.2f}[/bold]")
+    lines.append(f"  Projected Weekly:  [bold]${data.get('projected_weekly', 0):>10,.2f}[/bold]")
+    lines.append(f"  Projected Total:   [bold]${data.get('projected_total', 0):>10,.2f}[/bold] ({data.get('forecast_days', 0)} days)")
+    lines.append(f"  Confidence:        [{conf_color}]{confidence.upper()}[/{conf_color}] ({data.get('data_days', 0)} days of data)")
+    lines.append("")
+
+    # Day of week pattern
+    dow = data.get("day_of_week_pattern", {})
+    if any(v > 0 for v in dow.values()):
+        lines.append("[dim]  Day of Week Averages:[/dim]")
+        best_day = max(dow, key=dow.get) if dow else ""
+        for day, avg in dow.items():
+            if avg > 0:
+                marker = " [green]*[/green]" if day == best_day else ""
+                lines.append(f"    {day:<10} ${avg:>8,.2f}{marker}")
+
+    return Panel(
+        "\n".join(lines),
+        title=f"[bold]Revenue Forecast — {data.get('forecast_days', 30)} Days[/bold]",
+        border_style="blue",
+    )
+
+
 def get_spinner() -> Progress:
     """Get a consistent spinner for async operations."""
     return Progress(

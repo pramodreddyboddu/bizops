@@ -756,6 +756,74 @@ def get_cash_forecast(days_ahead: int = 14) -> str:
 
 
 @mcp.tool()
+def get_pl_trend(months: int = 6) -> str:
+    """Get month-over-month Profit & Loss trend — revenue, expenses, profit margin.
+
+    Use this when the owner asks "how are we trending?", "compare months",
+    "revenue trend", "are we making more money?", or any P&L comparison question.
+
+    Args:
+        months: Number of months to analyze (default 6).
+
+    Returns:
+        JSON with monthly snapshots (revenue, expenses, profit, margin) and averages.
+    """
+    from bizops.parsers.trends import TrendEngine
+
+    config = load_config()
+    engine = TrendEngine(config)
+    data = engine.get_pl_trend(months)
+
+    return json.dumps(data, default=str, indent=2)
+
+
+@mcp.tool()
+def get_revenue_forecast(days: int = 30) -> str:
+    """Forecast revenue based on historical Toast POS data and seasonal patterns.
+
+    Use this when the owner asks "what will we make this month?", "revenue projection",
+    "sales forecast", or any forward-looking revenue question.
+
+    Args:
+        days: Number of days to forecast (default 30).
+
+    Returns:
+        JSON with projected daily/weekly/total revenue, confidence level,
+        and day-of-week sales patterns.
+    """
+    from bizops.parsers.trends import TrendEngine
+
+    config = load_config()
+    engine = TrendEngine(config)
+    data = engine.get_revenue_forecast(days)
+
+    return json.dumps(data, default=str, indent=2)
+
+
+@mcp.tool()
+def get_benchmarks() -> str:
+    """Compare current business metrics against industry benchmarks.
+
+    Use this when the owner asks "how am I doing?", "am I on track?",
+    "industry comparison", "business health check", or wants a report card.
+
+    Grades food cost %, labor %, prime cost %, rent %, and profit margin
+    against small/casual restaurant industry averages.
+
+    Returns:
+        JSON with metric grades (A-D), current values, benchmark ranges,
+        and overall business grade.
+    """
+    from bizops.parsers.trends import TrendEngine
+
+    config = load_config()
+    engine = TrendEngine(config)
+    data = engine.get_benchmarks()
+
+    return json.dumps(data, default=str, indent=2)
+
+
+@mcp.tool()
 def get_alerts(period: str = "month") -> str:
     """Scan all business data for anomalies and proactive warnings.
 
