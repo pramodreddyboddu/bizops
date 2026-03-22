@@ -405,6 +405,161 @@ def create_budget_panel(budget: dict[str, Any]) -> Panel:
     return Panel("\n".join(lines), title="[bold]Ordering Budget[/bold]", border_style="green")
 
 
+def create_labor_panel(data: dict[str, Any]) -> Panel:
+    """Create a Rich panel showing labor cost % with color coding and breakdown."""
+    pct = data.get("labor_pct", 0)
+    status = data.get("status", "healthy")
+    color = {"healthy": "green", "warning": "yellow", "critical": "red"}.get(status, "white")
+
+    lines = []
+    lines.append(f"[bold {color}]Labor Cost: {pct}%[/bold {color}]")
+    lines.append(f"  Target: {data.get('target_pct', 30)}%  |  Alert: {data.get('alert_threshold_pct', 35)}%")
+    lines.append("")
+    lines.append(f"  Net Sales:       [bold]${data.get('net_sales', 0):>12,.2f}[/bold]")
+    lines.append(f"  Total Labor:     [bold {color}]${data.get('total_labor', 0):>12,.2f}[/bold {color}]")
+    lines.append("")
+
+    breakdown = data.get("breakdown", {})
+    if breakdown:
+        lines.append("[dim]  Breakdown:[/dim]")
+        adp = breakdown.get("adp", {})
+        cash = breakdown.get("cash_payments", {})
+        other = breakdown.get("other", {})
+        if adp.get("total", 0) > 0:
+            lines.append(f"    ADP Payroll       ${adp['total']:>10,.2f}  ({adp.get('count', 0)} txns)")
+        if cash.get("total", 0) > 0:
+            lines.append(f"    Cash/Zelle        ${cash['total']:>10,.2f}  ({cash.get('count', 0)} txns)")
+        if other.get("total", 0) > 0:
+            lines.append(f"    Other Payroll     ${other['total']:>10,.2f}  ({other.get('count', 0)} txns)")
+
+    return Panel("\n".join(lines), title="[bold]Labor Cost Analysis[/bold]", border_style=color)
+
+
+def create_labor_trend_table(snapshots: list[dict[str, Any]]) -> Table:
+    """Create a Rich table for month-over-month labor cost trends."""
+    table = Table(title="Labor Cost Trend", show_header=True, header_style="bold cyan")
+    table.add_column("Month", style="cyan", width=10)
+    table.add_column("Net Sales", justify="right", width=14)
+    table.add_column("Labor Cost", justify="right", width=14)
+    table.add_column("Labor %", justify="right", width=10)
+    table.add_column("Trend", width=8)
+    table.add_column("Status", width=10)
+
+    arrows = {"up": "[red]^[/red]", "down": "[green]v[/green]", "flat": "[dim]-[/dim]"}
+    status_styles = {
+        "healthy": "[green]OK[/green]",
+        "warning": "[yellow]WARN[/yellow]",
+        "critical": "[red]HIGH[/red]",
+        "no_data": "[dim]--[/dim]",
+    }
+
+    for snap in snapshots:
+        table.add_row(
+            snap["month"],
+            f"${snap['net_sales']:,.2f}" if snap["net_sales"] else "--",
+            f"${snap['total_labor']:,.2f}" if snap["total_labor"] else "--",
+            f"{snap['labor_pct']}%" if snap["labor_pct"] else "--",
+            arrows.get(snap.get("trend", "flat"), "-"),
+            status_styles.get(snap.get("status", "no_data"), "--"),
+        )
+
+    return table
+
+
+def create_briefing_panel(data: dict[str, Any]) -> Panel:
+    """Create a Rich panel showing the daily owner briefing."""
+    sections = data.get("sections", {})
+    briefing_date = data.get("briefing_date", "Unknown")
+    lines = []
+
+    # Sales section
+    sales = sections.get("sales", {})
+    lines.append("[bold green]-- YESTERDAY'S SALES --[/bold green]")
+    net = sales.get("net_sales", 0)
+    gross = sales.get("gross_sales", 0)
+    tips = sales.get("tips", 0)
+    lines.append(f"  Gross: [bold]${gross:>10,.2f}[/bold]  |  Net: [bold]${net:>10,.2f}[/bold]  |  Tips: [bold]${tips:>8,.2f}[/bold]")
+    vs = sales.get("vs_last_week")
+    if vs and vs.get("pct_change") is not None:
+        pct = vs["pct_change"]
+        arrow = "^" if pct > 0 else "v" if pct < 0 else "-"
+        color = "green" if pct > 0 else "red" if pct < 0 else "dim"
+        lines.append(f"  vs Last Week: [{color}]{arrow} {abs(pct):.1f}%[/{color}]")
+    lines.append("")
+
+    # Cash position
+    cash = sections.get("cash_position", {})
+    lines.append("[bold blue]-- CASH POSITION --[/bold blue]")
+    balance = cash.get("estimated_balance", 0)
+    balance_color = "green" if balance > 0 else "red"
+    lines.append(f"  Est. Balance: [bold {balance_color}]${balance:>12,.2f}[/bold {balance_color}]")
+    lines.append(f"  MTD In:  [green]${cash.get('mtd_credits', 0):>10,.2f}[/green]  |  MTD Out: [red]${abs(cash.get('mtd_debits', 0)):>10,.2f}[/red]")
+    lines.append("")
+
+    # Labor & Food Cost side by side
+    labor = sections.get("labor", {})
+    food = sections.get("food_cost", {})
+    labor_pct = labor.get("labor_pct", 0)
+    labor_status = labor.get("status", "no_data")
+    food_pct = food.get("food_cost_pct", 0)
+    food_status = food.get("status", "no_data")
+
+    labor_color = {"healthy": "green", "warning": "yellow", "critical": "red"}.get(labor_status, "dim")
+    food_color = {"healthy": "green", "warning": "yellow", "critical": "red"}.get(food_status, "dim")
+
+    lines.append("[bold cyan]-- KEY METRICS --[/bold cyan]")
+    lines.append(f"  Labor: [{labor_color}]{labor_pct}%[/{labor_color}]  |  Food: [{food_color}]{food_pct}%[/{food_color}]")
+    if labor.get("breakdown"):
+        bd = labor["breakdown"]
+        parts = []
+        if bd.get("adp", 0):
+            parts.append(f"ADP ${bd['adp']:,.0f}")
+        if bd.get("cash", 0):
+            parts.append(f"Cash ${bd['cash']:,.0f}")
+        if parts:
+            lines.append(f"  Labor breakdown: {' | '.join(parts)}")
+    lines.append("")
+
+    # Orders due
+    orders = sections.get("orders_due", {})
+    today_orders = orders.get("today", [])
+    tomorrow_orders = orders.get("tomorrow", [])
+    if today_orders or tomorrow_orders:
+        lines.append("[bold yellow]-- ORDERS DUE --[/bold yellow]")
+        for o in today_orders:
+            lines.append(f"  [bold]TODAY:[/bold] {o['vendor']} — {o.get('product_count', 0)} items ~${o.get('est_total', 0):,.0f}")
+        for o in tomorrow_orders:
+            lines.append(f"  Tomorrow: {o['vendor']} — {o.get('product_count', 0)} items ~${o.get('est_total', 0):,.0f}")
+        lines.append("")
+
+    # Invoices
+    inv = sections.get("invoices", {})
+    unpaid = inv.get("unpaid_count", 0)
+    overdue = inv.get("overdue_count", 0)
+    if unpaid > 0 or overdue > 0:
+        lines.append("[bold magenta]-- INVOICES --[/bold magenta]")
+        if unpaid:
+            lines.append(f"  {unpaid} unpaid (${inv.get('total_outstanding', 0):,.2f})")
+        if overdue:
+            lines.append(f"  [red]{overdue} overdue (${inv.get('overdue_amount', 0):,.2f})[/red]")
+        lines.append("")
+
+    # Alerts
+    alert_list = sections.get("alerts", [])
+    if alert_list:
+        lines.append("[bold red]-- ALERTS --[/bold red]")
+        for a in alert_list:
+            severity = a.get("severity", "low")
+            icon = {"high": "[red]!![/red]", "medium": "[yellow]![/yellow]", "low": "[dim]i[/dim]"}.get(severity, "")
+            lines.append(f"  {icon} {a.get('message', '')}")
+
+    return Panel(
+        "\n".join(lines),
+        title=f"[bold]Daily Briefing — {briefing_date}[/bold]",
+        border_style="green",
+    )
+
+
 def get_spinner() -> Progress:
     """Get a consistent spinner for async operations."""
     return Progress(

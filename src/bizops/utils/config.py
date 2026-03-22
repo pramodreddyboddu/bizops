@@ -121,6 +121,24 @@ class FoodCostBudget(BaseModel):
     category_budgets: dict[str, float] = Field(default_factory=dict)
 
 
+class EmployeeConfig(BaseModel):
+    """An employee for labor cost tracking."""
+
+    name: str
+    role: str = ""
+    pay_type: str = "hourly"  # hourly | salary | contract
+    pay_rate: float = 0.0
+    aliases: list[str] = Field(default_factory=list)  # bank description matches
+    active: bool = True
+
+
+class LaborBudget(BaseModel):
+    """Budget thresholds for labor cost alerts."""
+
+    target_labor_pct: float = 30.0
+    alert_threshold_pct: float = 35.0
+
+
 class VendorConfig(BaseModel):
     """A known vendor for invoice matching."""
 
@@ -164,6 +182,10 @@ class BizOpsConfig(BaseSettings):
     # Ordering & food cost
     order_templates: list[OrderTemplate] = Field(default_factory=list)
     food_cost_budget: FoodCostBudget = Field(default_factory=FoodCostBudget)
+
+    # Labor tracking
+    employees: list[EmployeeConfig] = Field(default_factory=list)
+    labor_budget: LaborBudget = Field(default_factory=LaborBudget)
 
     # Excel output
     excel_template: str = "default"

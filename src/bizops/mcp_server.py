@@ -620,6 +620,85 @@ def get_product_catalog(vendor: str | None = None) -> str:
     }, default=str, indent=2)
 
 
+@mcp.tool()
+def get_daily_briefing(date: str | None = None) -> str:
+    """Get a comprehensive daily business briefing — THE go-to tool for general business questions.
+
+    Use this when the owner asks "how's my business?", "what should I know today?",
+    "morning update", "daily briefing", or any general business status question.
+
+    Returns yesterday's sales, cash position, labor cost, food cost,
+    pending orders, unpaid invoices, and alerts — all in one response.
+
+    Args:
+        date: Specific date (YYYY-MM-DD). Defaults to yesterday.
+
+    Returns:
+        JSON with complete daily briefing including all key metrics and alerts.
+    """
+    from bizops.parsers.briefing import BriefingEngine
+    from bizops.utils.storage import save_briefing
+
+    config = load_config()
+    engine = BriefingEngine(config)
+    data = engine.generate_briefing(date)
+
+    save_briefing(config, data, data["briefing_date"])
+
+    return json.dumps(data, default=str, indent=2)
+
+
+@mcp.tool()
+def get_labor_cost(period: str = "month") -> str:
+    """Get labor cost percentage, breakdown by source (ADP vs cash), and alerts.
+
+    Args:
+        period: Time period — "today", "week", "month", or "quarter".
+
+    Returns:
+        JSON with total labor, labor %, breakdown (ADP, cash, other), status, and alerts.
+    """
+    from bizops.parsers.labor import LaborEngine
+
+    config = load_config()
+    start, end = _resolve_dates(period)
+
+    bank_txns = load_bank_transactions(config, start, end)
+    toast = load_toast_reports(config, start, end)
+
+    engine = LaborEngine(config)
+    labor_data = engine.calculate_labor_cost(bank_txns, toast)
+    alerts = engine.check_labor_alerts(labor_data)
+
+    return json.dumps({
+        "period": {"start": start, "end": end},
+        **labor_data,
+        "alerts": alerts,
+    }, default=str, indent=2)
+
+
+@mcp.tool()
+def get_labor_trend(months: int = 3) -> str:
+    """Get month-over-month labor cost trend.
+
+    Args:
+        months: Number of months to compare (default 3).
+
+    Returns:
+        JSON with monthly snapshots including labor cost %, trend direction.
+    """
+    from bizops.parsers.labor import LaborEngine
+
+    config = load_config()
+    engine = LaborEngine(config)
+    snapshots = engine.get_labor_trend(months)
+
+    return json.dumps({
+        "months_analyzed": months,
+        "snapshots": snapshots,
+    }, default=str, indent=2)
+
+
 # ──────────────────────────────────────────────────────────────
 #  Resources
 # ──────────────────────────────────────────────────────────────

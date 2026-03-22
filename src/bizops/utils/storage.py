@@ -362,6 +362,72 @@ def load_orders(
 
 
 # ──────────────────────────────────────────────────────────────
+#  Labor cost storage
+# ──────────────────────────────────────────────────────────────
+
+def _get_labor_storage_path(config: BizOpsConfig, year_month: str) -> Path:
+    """Get the JSON storage file path for labor cost data."""
+    storage_dir = config.output_dir / "data"
+    storage_dir.mkdir(parents=True, exist_ok=True)
+    return storage_dir / f"labor_{year_month}.json"
+
+
+def save_labor(
+    config: BizOpsConfig,
+    data: dict[str, Any],
+    year_month: str | None = None,
+) -> Path:
+    """Save labor cost snapshot to local JSON storage."""
+    if year_month is None:
+        year_month = datetime.now().strftime("%Y-%m")
+    path = _get_labor_storage_path(config, year_month)
+    _save_json_dict(path, data)
+    return path
+
+
+def load_labor(
+    config: BizOpsConfig,
+    year_month: str,
+) -> dict[str, Any]:
+    """Load labor cost snapshot from local storage."""
+    path = _get_labor_storage_path(config, year_month)
+    return _load_json_dict(path)
+
+
+# ──────────────────────────────────────────────────────────────
+#  Daily briefing storage
+# ──────────────────────────────────────────────────────────────
+
+def _get_briefing_storage_path(config: BizOpsConfig, date_str: str) -> Path:
+    """Get the JSON storage file path for a daily briefing."""
+    storage_dir = config.output_dir / "data"
+    storage_dir.mkdir(parents=True, exist_ok=True)
+    return storage_dir / f"briefing_{date_str}.json"
+
+
+def save_briefing(
+    config: BizOpsConfig,
+    data: dict[str, Any],
+    date_str: str | None = None,
+) -> Path:
+    """Save daily briefing to local JSON storage."""
+    if date_str is None:
+        date_str = datetime.now().strftime("%Y-%m-%d")
+    path = _get_briefing_storage_path(config, date_str)
+    _save_json_dict(path, data)
+    return path
+
+
+def load_briefing(
+    config: BizOpsConfig,
+    date_str: str,
+) -> dict[str, Any]:
+    """Load daily briefing from local storage."""
+    path = _get_briefing_storage_path(config, date_str)
+    return _load_json_dict(path)
+
+
+# ──────────────────────────────────────────────────────────────
 #  Internal helpers
 # ──────────────────────────────────────────────────────────────
 

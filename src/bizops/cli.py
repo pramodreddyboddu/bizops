@@ -6,10 +6,12 @@ from rich.console import Console
 from bizops import __version__
 from bizops.commands.ask import app as ask_app
 from bizops.commands.bank import app as bank_app
+from bizops.commands.briefing import app as briefing_app
 from bizops.commands.config import app as config_app
 from bizops.commands.expenses import app as expenses_app
 from bizops.commands.foodcost import app as foodcost_app
 from bizops.commands.invoices import app as invoices_app
+from bizops.commands.labor import app as labor_app
 from bizops.commands.orders import app as orders_app
 
 console = Console()
@@ -27,6 +29,8 @@ app.add_typer(expenses_app, name="expenses", help="Track and categorize business
 app.add_typer(bank_app, name="bank", help="Import bank statements and reconcile transactions.")
 app.add_typer(foodcost_app, name="foodcost", help="Food cost analytics and budget tracking.")
 app.add_typer(orders_app, name="orders", help="Smart ordering and purchase order generation.")
+app.add_typer(labor_app, name="labor", help="Labor cost tracking and payroll analysis.")
+app.add_typer(briefing_app, name="briefing", help="Daily owner briefing — everything you need to know.")
 app.add_typer(config_app, name="config", help="Configure Gmail, vendors, and paths.")
 app.add_typer(ask_app, name="ask", help="AI-powered business questions and insights.")
 
