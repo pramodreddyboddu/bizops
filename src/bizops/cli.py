@@ -13,6 +13,7 @@ from bizops.commands.foodcost import app as foodcost_app
 from bizops.commands.invoices import app as invoices_app
 from bizops.commands.labor import app as labor_app
 from bizops.commands.orders import app as orders_app
+from bizops.commands.payments import app as payments_app
 
 console = Console()
 
@@ -29,6 +30,7 @@ app.add_typer(expenses_app, name="expenses", help="Track and categorize business
 app.add_typer(bank_app, name="bank", help="Import bank statements and reconcile transactions.")
 app.add_typer(foodcost_app, name="foodcost", help="Food cost analytics and budget tracking.")
 app.add_typer(orders_app, name="orders", help="Smart ordering and purchase order generation.")
+app.add_typer(payments_app, name="payments", help="Vendor payment tracking, calendar, and cash forecast.")
 app.add_typer(labor_app, name="labor", help="Labor cost tracking and payroll analysis.")
 app.add_typer(briefing_app, name="briefing", help="Daily owner briefing — everything you need to know.")
 app.add_typer(config_app, name="config", help="Configure Gmail, vendors, and paths.")

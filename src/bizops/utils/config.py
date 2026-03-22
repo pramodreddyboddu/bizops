@@ -147,6 +147,7 @@ class VendorConfig(BaseModel):
     category: str = "uncategorized"
     aliases: list[str] = Field(default_factory=list)
     products: list[ProductItem] = Field(default_factory=list)
+    payment_terms: str = "cod"  # cod, net15, net30, weekly
     order_day: int = -1  # preferred order day (-1 = any)
     lead_time_days: int = 1
 

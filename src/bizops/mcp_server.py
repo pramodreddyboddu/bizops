@@ -699,6 +699,62 @@ def get_labor_trend(months: int = 3) -> str:
     }, default=str, indent=2)
 
 
+@mcp.tool()
+def get_payment_status(period: str = "month") -> str:
+    """Get vendor payment status — who's paid, pending, and overdue.
+
+    Use this when the owner asks about bills, payments, who they owe,
+    what's overdue, or vendor payment history.
+
+    Args:
+        period: Time period — "month" or "quarter".
+
+    Returns:
+        JSON with per-vendor payment status, totals, and overdue amounts.
+    """
+    from bizops.parsers.payments import PaymentEngine
+
+    config = load_config()
+    start, end = _resolve_dates(period)
+
+    invoices = load_invoices(config, start, end)
+    bank_txns = load_bank_transactions(config, start, end)
+
+    engine = PaymentEngine(config)
+    result = engine.get_payment_status(invoices, bank_txns)
+
+    return json.dumps(result, default=str, indent=2)
+
+
+@mcp.tool()
+def get_cash_forecast(days_ahead: int = 14) -> str:
+    """Forecast cash position — can I afford upcoming payments?
+
+    Projects balance forward based on upcoming vendor payments and
+    estimated daily income from Toast POS.
+
+    Args:
+        days_ahead: Number of days to forecast (default 14).
+
+    Returns:
+        JSON with current balance, upcoming payments, projected income,
+        end balance, and danger days (low cash warnings).
+    """
+    from bizops.parsers.payments import PaymentEngine
+
+    config = load_config()
+    start, end = _resolve_dates("month")
+
+    invoices = load_invoices(config, start, end)
+    bank_txns = load_bank_transactions(config, start, end)
+    toast = load_toast_reports(config, start, end)
+
+    engine = PaymentEngine(config)
+    forecast = engine.get_cash_forecast(invoices, bank_txns, toast, days_ahead)
+
+    return json.dumps(forecast, default=str, indent=2)
+
+
 # ──────────────────────────────────────────────────────────────
 #  Resources
 # ──────────────────────────────────────────────────────────────

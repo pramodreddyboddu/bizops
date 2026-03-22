@@ -217,33 +217,41 @@ class BriefingEngine:
         return {"today": today_orders, "tomorrow": tomorrow_orders}
 
     def _build_invoices_section(self, date: str) -> dict[str, Any]:
-        """Summarize outstanding invoices."""
-        from bizops.utils.storage import load_invoices
+        """Summarize outstanding invoices using PaymentEngine."""
+        from bizops.parsers.payments import PaymentEngine
+        from bizops.utils.storage import load_bank_transactions, load_invoices
 
         target_dt = datetime.strptime(date, "%Y-%m-%d")
         month_start = target_dt.replace(day=1).strftime("%Y-%m-%d")
 
         invoices = load_invoices(self.config, month_start, date)
+        bank_txns = load_bank_transactions(self.config, month_start, date)
 
-        # Count unpaid invoices (transaction_type == "payment" that aren't reconciled)
-        unpaid = [
-            inv for inv in invoices
-            if inv.get("transaction_type") == "payment"
-            and not inv.get("reconciled", False)
-        ]
+        engine = PaymentEngine(self.config)
+        status = engine.get_payment_status(invoices, bank_txns, date)
+        summary = status.get("summary", {})
 
-        total_outstanding = sum(inv.get("amount", 0) for inv in unpaid)
+        total_outstanding = summary.get("total_outstanding", 0)
+        overdue_amount = summary.get("total_overdue", 0)
 
-        # Overdue = unpaid with date > 15 days ago
-        overdue_cutoff = (target_dt - timedelta(days=15)).strftime("%Y-%m-%d")
-        overdue = [inv for inv in unpaid if inv.get("date", "") < overdue_cutoff]
-        overdue_amount = sum(inv.get("amount", 0) for inv in overdue)
+        # Count unpaid/overdue
+        unpaid_count = 0
+        overdue_count = 0
+        for v in status.get("vendors", []):
+            unpaid_count += v.get("unpaid_count", 0)
+            overdue_count += v.get("overdue_count", 0)
+
+        # Upcoming payments (next 7 days)
+        upcoming = engine.get_payment_calendar(invoices, bank_txns, days_ahead=7)
+        upcoming_total = sum(p["amount"] for p in upcoming)
 
         return {
             "total_outstanding": round(total_outstanding, 2),
-            "unpaid_count": len(unpaid),
-            "overdue_count": len(overdue),
+            "unpaid_count": unpaid_count,
+            "overdue_count": overdue_count,
             "overdue_amount": round(overdue_amount, 2),
+            "upcoming_7d": round(upcoming_total, 2),
+            "upcoming_count": len(upcoming),
         }
 
     def _build_alerts(

@@ -560,6 +560,107 @@ def create_briefing_panel(data: dict[str, Any]) -> Panel:
     )
 
 
+def create_payment_status_table(data: dict[str, Any]) -> Table:
+    """Create a Rich table showing vendor payment status."""
+    table = Table(title="Vendor Payment Status", show_header=True, header_style="bold blue")
+    table.add_column("Vendor", style="cyan", width=20)
+    table.add_column("Invoiced", justify="right", width=12)
+    table.add_column("Paid", justify="right", width=12)
+    table.add_column("Balance Due", justify="right", width=12)
+    table.add_column("Overdue", justify="right", width=10)
+    table.add_column("Terms", width=8)
+
+    for v in data.get("vendors", []):
+        overdue = v.get("overdue_count", 0)
+        overdue_str = f"[red]{overdue}[/red]" if overdue > 0 else "[dim]0[/dim]"
+        balance = v.get("balance_due", 0)
+        balance_color = "red" if balance > 0 else "green"
+
+        table.add_row(
+            v.get("vendor", ""),
+            f"${v.get('total_invoiced', 0):,.2f}",
+            f"${v.get('total_paid', 0):,.2f}",
+            f"[{balance_color}]${balance:,.2f}[/{balance_color}]",
+            overdue_str,
+            v.get("invoices", [{}])[0].get("payment_terms", "cod") if v.get("invoices") else "cod",
+        )
+
+    # Summary row
+    summary = data.get("summary", {})
+    table.add_row(
+        "[bold]TOTAL[/bold]",
+        f"[bold]${summary.get('total_invoiced', 0):,.2f}[/bold]",
+        f"[bold]${summary.get('total_paid', 0):,.2f}[/bold]",
+        f"[bold red]${summary.get('total_outstanding', 0):,.2f}[/bold red]",
+        f"[bold red]${summary.get('total_overdue', 0):,.2f}[/bold red]",
+        "",
+    )
+
+    return table
+
+
+def create_payment_calendar_table(upcoming: list[dict[str, Any]]) -> Table:
+    """Create a Rich table showing upcoming payment due dates."""
+    table = Table(title="Payment Calendar", show_header=True, header_style="bold yellow")
+    table.add_column("Due Date", style="cyan", width=12)
+    table.add_column("Vendor", width=20)
+    table.add_column("Amount", justify="right", width=12)
+    table.add_column("Days", justify="right", width=6)
+    table.add_column("Status", width=10)
+
+    for p in upcoming:
+        days = p.get("days_until_due", 0)
+        if p.get("is_overdue"):
+            status = f"[red]OVERDUE[/red]"
+            days_str = f"[red]{days}d[/red]"
+        elif days <= 3:
+            status = "[yellow]SOON[/yellow]"
+            days_str = f"[yellow]{days}d[/yellow]"
+        else:
+            status = "[green]OK[/green]"
+            days_str = f"{days}d"
+
+        table.add_row(
+            p.get("due_date", ""),
+            p.get("vendor", ""),
+            f"${p.get('amount', 0):,.2f}",
+            days_str,
+            status,
+        )
+
+    return table
+
+
+def create_cash_forecast_panel(forecast: dict[str, Any]) -> Panel:
+    """Create a Rich panel showing cash flow forecast."""
+    lines = []
+    lines.append("[bold blue]-- CASH FLOW FORECAST --[/bold blue]")
+    lines.append(f"  Current Balance:    [bold]${forecast.get('current_balance', 0):>12,.2f}[/bold]")
+    lines.append(f"  Upcoming Payments:  [bold red]-${forecast.get('upcoming_payments', 0):>11,.2f}[/bold red]")
+    lines.append(f"  Projected Income:   [bold green]+${forecast.get('projected_income', 0):>11,.2f}[/bold green]")
+    lines.append(f"  {'─' * 38}")
+
+    end_balance = forecast.get("projected_end_balance", 0)
+    end_color = "green" if end_balance > 0 else "red"
+    lines.append(f"  Projected Balance:  [bold {end_color}]${end_balance:>12,.2f}[/bold {end_color}]")
+    lines.append("")
+    lines.append(f"  Avg Daily Income:   ${forecast.get('avg_daily_income', 0):>12,.2f}")
+    lines.append(f"  Forecast Period:    {forecast.get('days_forecast', 14)} days")
+
+    danger = forecast.get("danger_days", [])
+    if danger:
+        lines.append("")
+        lines.append(f"  [bold red]!! {len(danger)} day(s) with low balance (<$2,000)[/bold red]")
+        for d in danger[:3]:
+            lines.append(f"     {d['date']}: ${d['projected_balance']:,.2f}")
+
+    return Panel(
+        "\n".join(lines),
+        title=f"[bold]Cash Forecast — {forecast.get('days_forecast', 14)} Days[/bold]",
+        border_style="blue",
+    )
+
+
 def get_spinner() -> Progress:
     """Get a consistent spinner for async operations."""
     return Progress(
