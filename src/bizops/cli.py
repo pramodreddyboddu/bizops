@@ -16,6 +16,7 @@ from bizops.commands.labor import app as labor_app
 from bizops.commands.orders import app as orders_app
 from bizops.commands.payments import app as payments_app
 from bizops.commands.trends import app as trends_app
+from bizops.commands.waste import app as waste_app
 
 console = Console()
 
@@ -37,6 +38,7 @@ app.add_typer(labor_app, name="labor", help="Labor cost tracking and payroll ana
 app.add_typer(briefing_app, name="briefing", help="Daily owner briefing — everything you need to know.")
 app.add_typer(alerts_app, name="alerts", help="Smart alerts — proactive anomaly detection.")
 app.add_typer(trends_app, name="trends", help="P&L trends, benchmarks, and revenue forecasting.")
+app.add_typer(waste_app, name="waste", help="Waste estimation — track and reduce food waste.")
 app.add_typer(config_app, name="config", help="Configure Gmail, vendors, and paths.")
 app.add_typer(ask_app, name="ask", help="AI-powered business questions and insights.")
 

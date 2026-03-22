@@ -709,6 +709,70 @@ def create_alerts_panel(alerts: list[dict[str, Any]]) -> Panel:
     return Panel("\n".join(lines), title="[bold]Smart Alerts[/bold]", border_style=border)
 
 
+def create_waste_panel(data: dict[str, Any]) -> Panel:
+    """Create a Rich panel showing waste estimation results."""
+    waste_pct = data.get("waste_pct", 0)
+    status = data.get("status", "no_data")
+    status_colors = {
+        "excellent": "green", "good": "cyan", "average": "yellow",
+        "high": "red", "critical": "bold red", "no_data": "dim",
+    }
+    color = status_colors.get(status, "white")
+
+    lines = []
+    lines.append(f"[bold {color}]Estimated Waste: {waste_pct}% ({status.upper()})[/bold {color}]")
+    lines.append("")
+    lines.append(f"  Food Purchases:      [bold]${data.get('food_purchases', 0):>10,.2f}[/bold]")
+    lines.append(f"  Theoretical Usage:   [bold]${data.get('theoretical_usage', 0):>10,.2f}[/bold]")
+    lines.append(f"  [bold {color}]Estimated Waste:     ${data.get('estimated_waste', 0):>10,.2f}[/bold {color}]")
+    lines.append("")
+    lines.append(f"  Actual Food Cost:    {data.get('actual_food_cost_pct', 0)}%")
+    lines.append(f"  Target Food Cost:    {data.get('target_food_cost_pct', 30)}%")
+
+    breakdown = data.get("category_breakdown", {})
+    if breakdown:
+        lines.append("")
+        lines.append("[dim]  Purchase Breakdown:[/dim]")
+        for cat, total in sorted(breakdown.items(), key=lambda x: -x[1]):
+            label = cat.replace("_", " ").title()
+            lines.append(f"    {label:<18} ${total:>10,.2f}")
+
+    return Panel("\n".join(lines), title="[bold]Waste Estimation[/bold]", border_style=color.split()[-1])
+
+
+def create_waste_trend_table(data: dict[str, Any]) -> Table:
+    """Create a Rich table for month-over-month waste trends."""
+    table = Table(title="Waste Trend", show_header=True, header_style="bold cyan")
+    table.add_column("Month", style="cyan", width=10)
+    table.add_column("Waste %", justify="right", width=10)
+    table.add_column("Waste $", justify="right", width=12)
+    table.add_column("Purchases", justify="right", width=12)
+    table.add_column("Trend", width=8)
+    table.add_column("Status", width=10)
+
+    arrows = {"up": "[red]^[/red]", "down": "[green]v[/green]", "flat": "[dim]-[/dim]"}
+    status_styles = {
+        "excellent": "[green]OK[/green]",
+        "good": "[cyan]GOOD[/cyan]",
+        "average": "[yellow]AVG[/yellow]",
+        "high": "[red]HIGH[/red]",
+        "critical": "[bold red]!!![/bold red]",
+        "no_data": "[dim]--[/dim]",
+    }
+
+    for snap in data.get("snapshots", []):
+        table.add_row(
+            snap["month"],
+            f"{snap['waste_pct']}%" if snap["waste_pct"] else "[dim]--[/dim]",
+            f"${snap['waste_dollars']:,.0f}" if snap["waste_dollars"] else "[dim]--[/dim]",
+            f"${snap['food_purchases']:,.0f}" if snap["food_purchases"] else "[dim]--[/dim]",
+            arrows.get(snap.get("trend", "flat"), "-"),
+            status_styles.get(snap.get("status", "no_data"), "--"),
+        )
+
+    return table
+
+
 def create_pl_trend_table(data: dict[str, Any]) -> Table:
     """Create a Rich table for month-over-month P&L trends."""
     table = Table(title="P&L Trend", show_header=True, header_style="bold cyan")

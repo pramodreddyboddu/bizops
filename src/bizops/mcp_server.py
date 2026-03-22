@@ -824,6 +824,51 @@ def get_benchmarks() -> str:
 
 
 @mcp.tool()
+def get_waste_estimate(period: str = "month") -> str:
+    """Estimate food waste from the gap between purchases and theoretical usage.
+
+    Use this when the owner asks "how much food are we wasting?", "waste report",
+    "food shrinkage", or wants to reduce food costs. Also provides category breakdown.
+
+    Industry benchmarks: under 4% = excellent, 4-7% = good, 7-10% = average, 10%+ = high.
+
+    Args:
+        period: Time period — "month" or "quarter".
+
+    Returns:
+        JSON with waste estimate, percentages, category breakdown, and status.
+    """
+    from bizops.parsers.waste import WasteEngine
+
+    config = load_config()
+    engine = WasteEngine(config)
+    data = engine.estimate_waste_from_data(period)
+    tips = engine.get_waste_reduction_tips(data)
+    data["recommendations"] = tips
+
+    return json.dumps(data, default=str, indent=2)
+
+
+@mcp.tool()
+def get_waste_trend(months: int = 6) -> str:
+    """Track food waste estimates month-over-month.
+
+    Args:
+        months: Number of months to analyze (default 6).
+
+    Returns:
+        JSON with monthly waste %, dollars, and trend direction.
+    """
+    from bizops.parsers.waste import WasteEngine
+
+    config = load_config()
+    engine = WasteEngine(config)
+    data = engine.get_waste_trend(months)
+
+    return json.dumps(data, default=str, indent=2)
+
+
+@mcp.tool()
 def get_alerts(period: str = "month") -> str:
     """Scan all business data for anomalies and proactive warnings.
 
