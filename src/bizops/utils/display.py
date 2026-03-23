@@ -709,6 +709,110 @@ def create_alerts_panel(alerts: list[dict[str, Any]]) -> Panel:
     return Panel("\n".join(lines), title="[bold]Smart Alerts[/bold]", border_style=border)
 
 
+def create_health_score_panel(data: dict[str, Any]) -> Panel:
+    """Create a Rich panel showing the business health score."""
+    score = data.get("overall_score", 0)
+    grade = data.get("grade", "F")
+
+    grade_colors = {"A": "green", "B": "cyan", "C": "yellow", "D": "red", "F": "bold red"}
+    color = grade_colors.get(grade, "white")
+
+    lines = []
+    lines.append(f"[bold {color}]  HEALTH SCORE: {score}/100 ({grade})[/bold {color}]")
+    lines.append("")
+
+    # Component scores
+    components = data.get("components", {})
+    for key in ["food_cost", "labor_cost", "profit_margin", "sales_trend", "cash_position", "payment_discipline"]:
+        comp = components.get(key, {})
+        if comp.get("status") == "no_data":
+            bar = "[dim]no data[/dim]"
+        else:
+            comp_score = comp.get("score", 0)
+            filled = int(comp_score / 5)
+            empty = 20 - filled
+            comp_color = "green" if comp_score >= 70 else "yellow" if comp_score >= 50 else "red"
+            bar = f"[{comp_color}]{'█' * filled}{'░' * empty}[/{comp_color}] {comp_score:.0f}"
+
+        label = key.replace("_", " ").title()
+        detail = comp.get("detail", "")
+        lines.append(f"  {label:<22} {bar}")
+        if detail:
+            lines.append(f"  {'':22} [dim]{detail}[/dim]")
+
+    # Suggestions
+    suggestions = data.get("suggestions", [])
+    if suggestions:
+        lines.append("")
+        lines.append("[bold yellow]  TOP IMPROVEMENTS:[/bold yellow]")
+        for s in suggestions:
+            lines.append(f"    +{s['potential_points']:.0f}pts  {s['action']}")
+
+    border = color.split()[-1]
+    return Panel("\n".join(lines), title="[bold]Business Health Score[/bold]", border_style=border)
+
+
+def create_vendor_spending_table(data: dict[str, Any]) -> Table:
+    """Create a Rich table showing vendor spending analysis."""
+    table = Table(title="Vendor Spending Analysis", show_header=True, header_style="bold cyan")
+    table.add_column("#", style="dim", width=4)
+    table.add_column("Vendor", style="cyan", width=20)
+    table.add_column("Total Spend", justify="right", width=12)
+    table.add_column("Invoices", justify="right", width=8)
+    table.add_column("Avg/Invoice", justify="right", width=12)
+    table.add_column("Range", justify="right", width=16)
+    table.add_column("Trend", width=12)
+
+    trend_display = {
+        "increasing": "[red]^ UP[/red]",
+        "decreasing": "[green]v DOWN[/green]",
+        "stable": "[dim]- FLAT[/dim]",
+        "insufficient_data": "[dim]--[/dim]",
+    }
+
+    for i, v in enumerate(data.get("vendors", []), 1):
+        rng = f"${v['min_invoice']:,.0f}-${v['max_invoice']:,.0f}" if v["invoice_count"] > 1 else "--"
+        table.add_row(
+            str(i),
+            v["vendor"],
+            f"${v['total_spend']:,.2f}",
+            str(v["invoice_count"]),
+            f"${v['avg_per_invoice']:,.2f}",
+            rng,
+            trend_display.get(v.get("price_trend", ""), "--"),
+        )
+
+    return table
+
+
+def create_negotiation_panel(targets: list[dict[str, Any]]) -> Panel:
+    """Create a Rich panel showing negotiation targets."""
+    if not targets:
+        return Panel(
+            "[dim]No negotiation opportunities detected.[/dim]",
+            title="[bold]Negotiation Targets[/bold]",
+            border_style="green",
+        )
+
+    priority_icons = {"high": "[red]!![/red]", "medium": "[yellow]![/yellow]", "low": "[dim]i[/dim]"}
+    lines = []
+
+    for t in targets:
+        icon = priority_icons.get(t["priority"], "")
+        lines.append(f"{icon} [bold]{t['vendor']}[/bold] (${t['total_spend']:,.0f} spend)")
+        for reason in t.get("reasons", []):
+            lines.append(f"    - {reason}")
+        if t.get("est_monthly_savings", 0) > 0:
+            lines.append(f"    [green]Est. savings: ${t['est_monthly_savings']:,.0f}/mo[/green]")
+        lines.append("")
+
+    total_savings = sum(t.get("est_monthly_savings", 0) for t in targets)
+    if total_savings > 0:
+        lines.append(f"[bold green]Total potential savings: ${total_savings:,.0f}/month[/bold green]")
+
+    return Panel("\n".join(lines), title="[bold]Negotiation Targets[/bold]", border_style="yellow")
+
+
 def create_waste_panel(data: dict[str, Any]) -> Panel:
     """Create a Rich panel showing waste estimation results."""
     waste_pct = data.get("waste_pct", 0)

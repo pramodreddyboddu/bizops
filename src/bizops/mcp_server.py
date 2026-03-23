@@ -824,6 +824,76 @@ def get_benchmarks() -> str:
 
 
 @mcp.tool()
+def get_health_score() -> str:
+    """Get your overall business health score — one number from 0 to 100.
+
+    THE single most important metric. Use this when the owner asks
+    "how's my business doing?", "what's my score?", "business health",
+    "report card", or wants a quick overall assessment.
+
+    Combines food cost, labor, profit margin, sales trend, cash position,
+    and payment discipline into one weighted score with letter grade (A-F)
+    and top improvement suggestions.
+
+    Returns:
+        JSON with overall score (0-100), letter grade, component scores,
+        and actionable improvement suggestions.
+    """
+    from bizops.parsers.health_score import HealthScoreEngine
+
+    config = load_config()
+    engine = HealthScoreEngine(config)
+    data = engine.calculate_score()
+
+    return json.dumps(data, default=str, indent=2)
+
+
+@mcp.tool()
+def get_vendor_price_analysis(period: str = "month") -> str:
+    """Analyze vendor spending, detect price changes, and find negotiation opportunities.
+
+    Use this when the owner asks "who am I spending the most with?", "any price increases?",
+    "vendor analysis", "where can I save money?", or "negotiate with vendors".
+
+    Args:
+        period: Time period — "month" or "quarter".
+
+    Returns:
+        JSON with vendor spending rankings, price changes vs prior period,
+        and negotiation targets with estimated savings.
+    """
+    from bizops.parsers.vendor_prices import VendorPriceEngine
+
+    config = load_config()
+    start, end = _resolve_dates(period)
+
+    invoices = load_invoices(config, start, end)
+    bank_txns = load_bank_transactions(config, start, end)
+
+    # Previous period for comparison
+    from datetime import datetime as _dt
+    s = _dt.strptime(start, "%Y-%m-%d")
+    e = _dt.strptime(end, "%Y-%m-%d")
+    duration = (e - s).days
+    prev_end = s - timedelta(days=1)
+    prev_start = prev_end - timedelta(days=duration)
+    prev_invoices = load_invoices(config, prev_start.strftime("%Y-%m-%d"), prev_end.strftime("%Y-%m-%d"))
+
+    engine = VendorPriceEngine(config)
+    spending = engine.get_vendor_spending(invoices, bank_txns)
+    changes = engine.detect_price_changes(invoices, prev_invoices)
+    targets = engine.get_negotiation_targets(invoices, prev_invoices)
+
+    return json.dumps({
+        "period": {"start": start, "end": end},
+        "spending": spending,
+        "price_changes": changes,
+        "negotiation_targets": targets,
+        "total_potential_savings": round(sum(t.get("est_monthly_savings", 0) for t in targets), 2),
+    }, default=str, indent=2)
+
+
+@mcp.tool()
 def get_waste_estimate(period: str = "month") -> str:
     """Estimate food waste from the gap between purchases and theoretical usage.
 
