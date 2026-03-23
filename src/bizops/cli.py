@@ -8,10 +8,12 @@ from bizops.commands.alerts import app as alerts_app
 from bizops.commands.ask import app as ask_app
 from bizops.commands.bank import app as bank_app
 from bizops.commands.briefing import app as briefing_app
+from bizops.commands.budget import app as budget_app
 from bizops.commands.config import app as config_app
 from bizops.commands.expenses import app as expenses_app
 from bizops.commands.foodcost import app as foodcost_app
 from bizops.commands.health import app as health_app
+from bizops.commands.inventory import app as inventory_app
 from bizops.commands.invoices import app as invoices_app
 from bizops.commands.labor import app as labor_app
 from bizops.commands.orders import app as orders_app
@@ -34,7 +36,9 @@ app.add_typer(invoices_app, name="invoices", help="Process and manage vendor inv
 app.add_typer(expenses_app, name="expenses", help="Track and categorize business expenses.")
 app.add_typer(bank_app, name="bank", help="Import bank statements and reconcile transactions.")
 app.add_typer(foodcost_app, name="foodcost", help="Food cost analytics and budget tracking.")
+app.add_typer(budget_app, name="budget", help="Budget tracking — set budgets, track spending, get alerts.")
 app.add_typer(health_app, name="health", help="Business health score — your overall business grade.")
+app.add_typer(inventory_app, name="inventory", help="Inventory estimation — stock levels and reorders.")
 app.add_typer(orders_app, name="orders", help="Smart ordering and purchase order generation.")
 app.add_typer(payments_app, name="payments", help="Vendor payment tracking, calendar, and cash forecast.")
 app.add_typer(labor_app, name="labor", help="Labor cost tracking and payroll analysis.")

@@ -139,6 +139,22 @@ class LaborBudget(BaseModel):
     alert_threshold_pct: float = 35.0
 
 
+class MonthlyBudget(BaseModel):
+    """Monthly budget for an expense category."""
+
+    category: str
+    amount: float = 0.0
+    alert_at_pct: float = 80.0  # alert when this % of budget used
+
+
+class BudgetConfig(BaseModel):
+    """Overall budget configuration."""
+
+    monthly_budgets: list[MonthlyBudget] = Field(default_factory=list)
+    total_monthly_budget: float = 0.0  # 0 = auto-sum from categories
+    revenue_target: float = 0.0  # monthly revenue target
+
+
 class VendorConfig(BaseModel):
     """A known vendor for invoice matching."""
 
@@ -187,6 +203,9 @@ class BizOpsConfig(BaseSettings):
     # Labor tracking
     employees: list[EmployeeConfig] = Field(default_factory=list)
     labor_budget: LaborBudget = Field(default_factory=LaborBudget)
+
+    # Budgeting
+    budget: BudgetConfig = Field(default_factory=BudgetConfig)
 
     # Excel output
     excel_template: str = "default"

@@ -939,6 +939,74 @@ def get_waste_trend(months: int = 6) -> str:
 
 
 @mcp.tool()
+def get_inventory_estimate(period: str = "month") -> str:
+    """Estimate current stock levels — no inventory system needed.
+
+    Use this when the owner asks "what do I need to order?", "am I running low?",
+    "stock check", "inventory levels", or "reorder list".
+
+    Estimates remaining stock from purchase history and sales-based usage.
+
+    Args:
+        period: Time period for purchases — "month" or "quarter".
+
+    Returns:
+        JSON with estimated stock by category, days remaining,
+        reorder alerts, and suggested orders.
+    """
+    from bizops.parsers.inventory import InventoryEstimator
+
+    config = load_config()
+    start, end = _resolve_dates(period)
+
+    invoices = load_invoices(config, start, end)
+    toast = load_toast_reports(config, start, end)
+
+    engine = InventoryEstimator(config)
+    stock = engine.estimate_stock(invoices, toast)
+    reorders = engine.get_reorder_list(invoices, toast)
+
+    return json.dumps({
+        "stock_levels": stock,
+        "reorder_list": reorders,
+        "reorder_count": len(reorders),
+    }, default=str, indent=2)
+
+
+@mcp.tool()
+def get_expense_budget_status() -> str:
+    """Get budget status — actual spending vs monthly budgets by category.
+
+    Use this when the owner asks "how's my budget?", "am I overspending?",
+    "budget check", "spending vs plan", or wants to know remaining budget.
+
+    Returns:
+        JSON with per-category budget vs actual, projected end-of-month,
+        status flags (on_track/warning/over_budget), and budget alerts.
+    """
+    from bizops.parsers.budget import BudgetEngine
+
+    config = load_config()
+    today = datetime.now()
+    year_month = today.strftime("%Y-%m")
+    start = today.replace(day=1).strftime("%Y-%m-%d")
+    end = today.strftime("%Y-%m-%d")
+
+    expenses = load_expenses(config, year_month) or {}
+    toast = load_toast_reports(config, start, end)
+
+    engine = BudgetEngine(config)
+    status = engine.get_budget_status(expenses, toast)
+    alerts = engine.get_budget_alerts(expenses)
+
+    return json.dumps({
+        "budget_status": status,
+        "alerts": alerts,
+        "alert_count": len(alerts),
+    }, default=str, indent=2)
+
+
+@mcp.tool()
 def get_alerts(period: str = "month") -> str:
     """Scan all business data for anomalies and proactive warnings.
 

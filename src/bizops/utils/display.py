@@ -709,6 +709,56 @@ def create_alerts_panel(alerts: list[dict[str, Any]]) -> Panel:
     return Panel("\n".join(lines), title="[bold]Smart Alerts[/bold]", border_style=border)
 
 
+def create_budget_status_table(data: dict[str, Any]) -> Table:
+    """Create a Rich table showing budget vs actual by category."""
+    title = f"Budget Status — {data.get('month', '')} (Day {data.get('day_of_month', '?')}/{data.get('days_in_month', '?')})"
+    table = Table(title=title, show_header=True, header_style="bold cyan")
+    table.add_column("Category", style="cyan", width=16)
+    table.add_column("Budget", justify="right", width=10)
+    table.add_column("Actual", justify="right", width=10)
+    table.add_column("Remaining", justify="right", width=10)
+    table.add_column("Used %", justify="right", width=8)
+    table.add_column("Projected", justify="right", width=10)
+    table.add_column("Status", width=14)
+
+    status_display = {
+        "over_budget": "[bold red]OVER BUDGET[/bold red]",
+        "warning": "[yellow]WARNING[/yellow]",
+        "ahead_of_pace": "[yellow]FAST PACE[/yellow]",
+        "on_track": "[green]ON TRACK[/green]",
+        "no_budget": "[dim]NO BUDGET[/dim]",
+    }
+
+    for cat in data.get("categories", []):
+        used_color = "red" if cat["used_pct"] > 100 else "yellow" if cat["used_pct"] > 80 else "green"
+        table.add_row(
+            cat["category"],
+            f"${cat['budgeted']:,.0f}" if cat["budgeted"] > 0 else "--",
+            f"${cat['actual']:,.0f}",
+            f"${cat['remaining']:,.0f}" if cat["budgeted"] > 0 else "--",
+            f"[{used_color}]{cat['used_pct']}%[/{used_color}]" if cat["budgeted"] > 0 else "--",
+            f"${cat['projected_eom']:,.0f}",
+            status_display.get(cat["status"], "--"),
+        )
+
+    # Summary row
+    summary = data.get("summary", {})
+    if summary.get("total_budgeted", 0) > 0:
+        total_color = "red" if summary["total_used_pct"] > 100 else "yellow" if summary["total_used_pct"] > 80 else "green"
+        table.add_section()
+        table.add_row(
+            "[bold]TOTAL[/bold]",
+            f"[bold]${summary['total_budgeted']:,.0f}[/bold]",
+            f"[bold]${summary['total_actual']:,.0f}[/bold]",
+            f"[bold]${summary['total_remaining']:,.0f}[/bold]",
+            f"[bold {total_color}]{summary['total_used_pct']}%[/bold {total_color}]",
+            "",
+            "",
+        )
+
+    return table
+
+
 def create_health_score_panel(data: dict[str, Any]) -> Panel:
     """Create a Rich panel showing the business health score."""
     score = data.get("overall_score", 0)
