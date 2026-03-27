@@ -8,8 +8,10 @@ Run with:
 from __future__ import annotations
 
 import json
+import os
 from collections import defaultdict
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
@@ -96,6 +98,7 @@ def get_invoices(
         "total_amount": round(total, 2),
         "by_vendor": {k: round(v, 2) for k, v in sorted(vendor_totals.items(), key=lambda x: x[1], reverse=True)},
         "invoices": invoices[:50],  # Limit to avoid huge responses
+        "data_freshness": _data_freshness("invoices"),
     }, default=str, indent=2)
 
 
@@ -137,6 +140,7 @@ def get_expenses(period: str = "month") -> str:
         "revenue": expenses.get("revenue", {}),
         "totals": expenses.get("totals", {}),
         "expenses_by_category": category_summary,
+        "data_freshness": _data_freshness("expenses"),
     }, default=str, indent=2)
 
 
@@ -191,6 +195,7 @@ def get_toast_sales(period: str = "month") -> str:
             "total_orders": orders,
         },
         "daily": daily,
+        "data_freshness": _data_freshness("toast"),
     }, default=str, indent=2)
 
 
@@ -238,6 +243,7 @@ def get_vendor_summary(period: str = "month") -> str:
         "total_vendors": len(ranked),
         "total_spend": round(total_spend, 2),
         "vendors": ranked,
+        "data_freshness": _data_freshness("invoices"),
     }, default=str, indent=2)
 
 
@@ -284,6 +290,7 @@ def get_pl_summary(period: str = "month") -> str:
         "expenses": category_totals,
         "total_expenses": totals.get("total_expenses", 0),
         "net_profit": totals.get("net_profit", 0),
+        "data_freshness": _data_freshness("expenses"),
     }, default=str, indent=2)
 
 
@@ -368,6 +375,7 @@ def get_bank_transactions(
         "total_credits": round(total_credits, 2),
         "net_flow": round(total_debits + total_credits, 2),
         "transactions": txns[:100],
+        "data_freshness": _data_freshness("bank"),
     }, default=str, indent=2)
 
 
@@ -414,6 +422,7 @@ def get_reconciliation(period: str = "month") -> str:
             for k, v in sorted(hidden_by_cat.items(), key=lambda x: -x[1]["total"])
         },
         "unmatched_invoice_count": len(result.get("unmatched_invoices", [])),
+        "data_freshness": _data_freshness("reconciliation"),
     }, default=str, indent=2)
 
 
@@ -460,6 +469,7 @@ def get_cash_flow(period: str = "month") -> str:
         "total_expenses": round(abs(cash_flow.get("total_expenses", 0)), 2),
         "net_cash_flow": round(cash_flow.get("net_cash_flow", 0), 2),
         "transaction_count": cash_flow.get("transaction_count", 0),
+        "data_freshness": _data_freshness("bank"),
     }, default=str, indent=2)
 
 
@@ -485,6 +495,7 @@ def get_food_cost(period: str = "month") -> str:
         return json.dumps({
             "period": {"start": start, "end": end},
             **fc_data,
+            "data_freshness": _data_freshness("food_cost"),
         }, default=str, indent=2)
 
     # Calculate from expense + toast data
@@ -503,6 +514,7 @@ def get_food_cost(period: str = "month") -> str:
     return json.dumps({
         "period": {"start": start, "end": end},
         **fc_data,
+        "data_freshness": _data_freshness("food_cost"),
     }, default=str, indent=2)
 
 
@@ -674,6 +686,7 @@ def get_labor_cost(period: str = "month") -> str:
         "period": {"start": start, "end": end},
         **labor_data,
         "alerts": alerts,
+        "data_freshness": _data_freshness("bank"),
     }, default=str, indent=2)
 
 
@@ -722,6 +735,7 @@ def get_payment_status(period: str = "month") -> str:
 
     engine = PaymentEngine(config)
     result = engine.get_payment_status(invoices, bank_txns)
+    result["data_freshness"] = _data_freshness("invoices")
 
     return json.dumps(result, default=str, indent=2)
 
@@ -751,6 +765,7 @@ def get_cash_forecast(days_ahead: int = 14) -> str:
 
     engine = PaymentEngine(config)
     forecast = engine.get_cash_forecast(invoices, bank_txns, toast, days_ahead)
+    forecast["data_freshness"] = _data_freshness("bank")
 
     return json.dumps(forecast, default=str, indent=2)
 
@@ -890,6 +905,7 @@ def get_vendor_price_analysis(period: str = "month") -> str:
         "price_changes": changes,
         "negotiation_targets": targets,
         "total_potential_savings": round(sum(t.get("est_monthly_savings", 0) for t in targets), 2),
+        "data_freshness": _data_freshness("invoices"),
     }, default=str, indent=2)
 
 
@@ -970,6 +986,7 @@ def get_inventory_estimate(period: str = "month") -> str:
         "stock_levels": stock,
         "reorder_list": reorders,
         "reorder_count": len(reorders),
+        "data_freshness": _data_freshness("invoices"),
     }, default=str, indent=2)
 
 
@@ -1003,6 +1020,7 @@ def get_expense_budget_status() -> str:
         "budget_status": status,
         "alerts": alerts,
         "alert_count": len(alerts),
+        "data_freshness": _data_freshness("expenses"),
     }, default=str, indent=2)
 
 
@@ -1054,6 +1072,227 @@ def get_alerts(period: str = "month") -> str:
         "alert_count": len(alerts),
         "summary": {"critical": crit, "warning": warn, "info": info},
         "alerts": alerts,
+        "data_freshness": _data_freshness("invoices"),
+    }, default=str, indent=2)
+
+
+# ──────────────────────────────────────────────────────────────
+#  Data sync tools
+# ──────────────────────────────────────────────────────────────
+
+
+@mcp.tool()
+def sync_gmail(period: str = "week") -> str:
+    """Pull fresh invoices and expenses from Gmail — refreshes ALL cached data.
+
+    CALL THIS FIRST if data looks stale or the owner asks about recent transactions.
+    Connects to the Desi Delight business Gmail, fetches invoice/bill/payment emails,
+    parses amounts and vendors, deduplicates, categorizes expenses, and saves to storage.
+
+    After syncing, all other tools (get_invoices, get_expenses, get_alerts, etc.)
+    will return fresh data.
+
+    Args:
+        period: How far back to pull — "today", "week", "month", or "quarter".
+
+    Returns:
+        JSON summary: new invoices found, total count, vendors, date range, expense status.
+    """
+    config = load_config()
+    start, end = _resolve_dates(period)
+
+    result: dict[str, Any] = {
+        "period": {"start": start, "end": end},
+        "status": "success",
+        "invoices": {"new": 0, "total": 0, "vendors": []},
+        "expenses": {"updated": False},
+        "errors": [],
+    }
+
+    try:
+        # 1. Connect to Gmail and fetch emails
+        from bizops.connectors.gmail import GmailConnector
+
+        gmail = GmailConnector(config)
+        raw_emails = gmail.search_invoices(start_date=start, end_date=end)
+
+        # 2. Parse into structured invoices
+        from bizops.parsers.invoice import InvoiceParser
+
+        parser = InvoiceParser(config)
+        invoices = parser.parse_emails(raw_emails)
+
+        # 3. Deduplicate
+        if config.dedup_enabled:
+            invoices = parser.deduplicate(invoices)
+
+        # 4. Save to storage (merges with existing, skips duplicates by message_id)
+        from bizops.utils.storage import save_invoices
+
+        year_month = start[:7]
+        save_invoices(config, invoices, year_month)
+
+        # If month boundary crossed, save to both months
+        end_month = end[:7]
+        if end_month != year_month:
+            end_month_invoices = [i for i in invoices if (i.get("date") or "")[:7] == end_month]
+            if end_month_invoices:
+                save_invoices(config, end_month_invoices, end_month)
+
+        # Count vendors
+        vendors_found = list({inv.get("vendor", "Unknown") for inv in invoices if inv.get("vendor") != "Unknown"})
+
+        result["invoices"] = {
+            "new": len(invoices),
+            "total": len(load_invoices(config, start, end)),
+            "vendors": sorted(vendors_found),
+            "emails_searched": len(raw_emails),
+        }
+
+        # 5. Run expense categorization on the fresh data
+        try:
+            from bizops.commands._export import segregate_invoices
+            from bizops.parsers.expenses import ExpenseEngine
+            from bizops.utils.storage import load_toast_reports, save_expenses
+
+            all_invoices = load_invoices(config, start, end)
+            buckets = segregate_invoices(all_invoices)
+            toast_reports = load_toast_reports(config, start, end)
+
+            engine = ExpenseEngine(config)
+            expense_data = engine.categorize_all(
+                buckets.get("payment", []),
+                toast_reports,
+                start,
+                end,
+            )
+            save_expenses(config, expense_data, year_month)
+            result["expenses"]["updated"] = True
+        except Exception as e:
+            result["expenses"]["error"] = str(e)
+
+    except FileNotFoundError as e:
+        result["status"] = "error"
+        result["errors"].append(f"Gmail credentials not found: {e}. Run 'bizops config setup' first.")
+    except Exception as e:
+        result["status"] = "error"
+        result["errors"].append(f"Sync failed: {e}")
+
+    result["synced_at"] = datetime.now().isoformat()
+
+    return json.dumps(result, default=str, indent=2)
+
+
+@mcp.tool()
+def sync_status() -> str:
+    """Check when business data was last synced and how stale it is.
+
+    Use this to decide whether to call sync_gmail before answering a question.
+    Shows modification times for all data files and freshness status.
+
+    Returns:
+        JSON with last sync timestamps, hours since sync, freshness status per data type,
+        and a recommendation on whether to sync.
+    """
+    config = load_config()
+    data_dir = config.output_dir / "data"
+
+    now = datetime.now()
+    year_month = now.strftime("%Y-%m")
+
+    # Check all data files for current month
+    file_checks = {
+        "invoices": f"invoices_{year_month}.json",
+        "expenses": f"expenses_{year_month}.json",
+        "toast": f"toast_{year_month}.json",
+        "bank": f"bank_{year_month}.json",
+        "reconciliation": f"reconciliation_{year_month}.json",
+        "food_cost": f"food_cost_{year_month}.json",
+        "labor": f"labor_{year_month}.json",
+    }
+
+    files: dict[str, Any] = {}
+    oldest_sync = None
+
+    for data_type, filename in file_checks.items():
+        filepath = data_dir / filename
+        if filepath.exists():
+            stat = filepath.stat()
+            mod_time = datetime.fromtimestamp(stat.st_mtime)
+            hours_ago = round((now - mod_time).total_seconds() / 3600, 1)
+            size_kb = round(stat.st_size / 1024, 1)
+
+            if hours_ago < 2:
+                freshness = "fresh"
+            elif hours_ago < 24:
+                freshness = "recent"
+            elif hours_ago < 72:
+                freshness = "stale"
+            else:
+                freshness = "very_stale"
+
+            files[data_type] = {
+                "exists": True,
+                "last_modified": mod_time.isoformat(),
+                "hours_ago": hours_ago,
+                "size_kb": size_kb,
+                "freshness": freshness,
+            }
+
+            if oldest_sync is None or mod_time < oldest_sync:
+                oldest_sync = mod_time
+        else:
+            files[data_type] = {
+                "exists": False,
+                "freshness": "missing",
+            }
+
+    # Overall recommendation
+    stale_types = [k for k, v in files.items() if v.get("freshness") in ("stale", "very_stale", "missing")]
+    if stale_types:
+        recommendation = f"Data is stale. Run sync_gmail to refresh: {', '.join(stale_types)}"
+        overall_status = "stale"
+    elif any(v.get("freshness") == "recent" for v in files.values()):
+        recommendation = "Data is reasonably fresh (synced within 24 hours)."
+        overall_status = "recent"
+    else:
+        recommendation = "Data is fresh — no sync needed."
+        overall_status = "fresh"
+
+    return json.dumps({
+        "current_month": year_month,
+        "overall_status": overall_status,
+        "recommendation": recommendation,
+        "stale_data_types": stale_types,
+        "files": files,
+        "checked_at": now.isoformat(),
+    }, default=str, indent=2)
+
+
+@mcp.tool()
+def sync_toast() -> str:
+    """Placeholder — Toast POS sync is not yet automated.
+
+    Toast daily report emails go to a DIFFERENT Google account than the
+    Desi Delight business Gmail. This tool explains the current limitations
+    and how to get Toast data into the system manually.
+
+    Returns:
+        JSON with instructions for manual Toast data import.
+    """
+    return json.dumps({
+        "status": "not_automated",
+        "message": (
+            "Toast POS sync requires separate authentication. "
+            "Toast daily report emails go to a different Gmail account "
+            "than the business account currently connected."
+        ),
+        "workarounds": [
+            "Export Toast daily summary CSV from the Toast dashboard and run: bizops bank import toast-export.csv",
+            "Forward Toast daily report emails to the business Gmail account",
+            "Configure a second Gmail connector (future feature)",
+        ],
+        "manual_command": "bizops bank import <toast-csv-file>",
     }, default=str, indent=2)
 
 
@@ -1105,6 +1344,67 @@ def get_status_resource() -> str:
 # ──────────────────────────────────────────────────────────────
 #  Helpers
 # ──────────────────────────────────────────────────────────────
+
+
+def _data_freshness(data_type: str = "invoices") -> dict[str, Any]:
+    """Check freshness of a data file and return a summary dict.
+
+    Args:
+        data_type: One of "invoices", "expenses", "toast", "bank", "reconciliation",
+                   "food_cost", "labor".
+
+    Returns:
+        Dict with last_synced, hours_ago, status, and suggestion.
+    """
+    config = load_config()
+    data_dir = config.output_dir / "data"
+    year_month = datetime.now().strftime("%Y-%m")
+
+    filename_map = {
+        "invoices": f"invoices_{year_month}.json",
+        "expenses": f"expenses_{year_month}.json",
+        "toast": f"toast_{year_month}.json",
+        "bank": f"bank_{year_month}.json",
+        "reconciliation": f"reconciliation_{year_month}.json",
+        "food_cost": f"food_cost_{year_month}.json",
+        "labor": f"labor_{year_month}.json",
+    }
+
+    filename = filename_map.get(data_type, f"{data_type}_{year_month}.json")
+    filepath = data_dir / filename
+
+    if not filepath.exists():
+        return {
+            "last_synced": None,
+            "hours_ago": None,
+            "status": "missing",
+            "suggestion": f"No {data_type} data found. Run sync_gmail to pull fresh data.",
+        }
+
+    mod_time = datetime.fromtimestamp(filepath.stat().st_mtime)
+    hours_ago = round((datetime.now() - mod_time).total_seconds() / 3600, 1)
+
+    if hours_ago < 2:
+        status = "fresh"
+        suggestion = None
+    elif hours_ago < 24:
+        status = "recent"
+        suggestion = None
+    elif hours_ago < 72:
+        status = "stale"
+        suggestion = f"Data is {hours_ago:.0f} hours old. Run sync_gmail to refresh."
+    else:
+        status = "very_stale"
+        suggestion = f"Data is {hours_ago / 24:.0f} days old! Run sync_gmail to get current data."
+
+    result: dict[str, Any] = {
+        "last_synced": mod_time.isoformat(),
+        "hours_ago": hours_ago,
+        "status": status,
+    }
+    if suggestion:
+        result["suggestion"] = suggestion
+    return result
 
 
 def _top_vendors(items: list[dict[str, Any]], limit: int = 5) -> list[dict[str, Any]]:
