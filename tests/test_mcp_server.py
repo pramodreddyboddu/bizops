@@ -8,8 +8,10 @@ from unittest.mock import patch
 import pytest
 
 from bizops.mcp_server import (
+    _data_freshness,
     _resolve_dates,
     _top_vendors,
+    _with_freshness,
     get_invoices,
     get_expenses,
     get_toast_sales,
@@ -306,3 +308,80 @@ def test_list_vendors(mock_config, mock_config_obj=None):
     assert result["total_vendors"] == 2
     assert result["vendors"][0]["name"] == "Sysco"
     assert result["vendors"][1]["category"] == "produce"
+
+
+# ──────────────────────────────────────────────────────────────
+#  _data_freshness
+# ──────────────────────────────────────────────────────────────
+
+
+@patch("bizops.mcp_server.load_config")
+def test_data_freshness_missing_file(mock_config, tmp_path):
+    config = BizOpsConfig(output_dir=tmp_path)
+    mock_config.return_value = config
+    (tmp_path / "data").mkdir()
+
+    result = _data_freshness("invoices")
+    assert result["status"] == "no_data"
+    assert result["hours_ago"]["invoices"] is None
+    assert "suggestion" in result
+
+
+@patch("bizops.mcp_server.load_config")
+def test_data_freshness_fresh_file(mock_config, tmp_path):
+    import time
+
+    config = BizOpsConfig(output_dir=tmp_path)
+    mock_config.return_value = config
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+
+    from datetime import datetime
+    ym = datetime.now().strftime("%Y-%m")
+    (data_dir / f"invoices_{ym}.json").write_text("[]")
+
+    result = _data_freshness("invoices")
+    assert result["status"] == "fresh"
+    assert result["hours_ago"]["invoices"] < 1
+
+
+@patch("bizops.mcp_server.load_config")
+def test_data_freshness_multiple_types(mock_config, tmp_path):
+    config = BizOpsConfig(output_dir=tmp_path)
+    mock_config.return_value = config
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+
+    from datetime import datetime
+    ym = datetime.now().strftime("%Y-%m")
+    (data_dir / f"invoices_{ym}.json").write_text("[]")
+    # expenses file missing
+
+    result = _data_freshness("invoices", "expenses")
+    assert result["status"] == "no_data"  # worst of the two
+    assert result["hours_ago"]["invoices"] is not None
+    assert result["hours_ago"]["expenses"] is None
+
+
+# ──────────────────────────────────────────────────────────────
+#  _with_freshness
+# ──────────────────────────────────────────────────────────────
+
+
+@patch("bizops.mcp_server.load_config")
+def test_with_freshness_injects(mock_config, tmp_path):
+    config = BizOpsConfig(output_dir=tmp_path)
+    mock_config.return_value = config
+    (tmp_path / "data").mkdir()
+
+    original = json.dumps({"count": 5, "items": []})
+    result = json.loads(_with_freshness(original, "invoices"))
+
+    assert "data_freshness" in result
+    assert result["count"] == 5  # original data preserved
+
+
+def test_with_freshness_bad_json():
+    """Should return original string if JSON parsing fails."""
+    result = _with_freshness("not json", "invoices")
+    assert result == "not json"

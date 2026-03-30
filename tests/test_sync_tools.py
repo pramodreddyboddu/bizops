@@ -255,7 +255,7 @@ class TestDataFreshness:
         result = _data_freshness("invoices")
 
         assert result["status"] == "fresh"
-        assert result["hours_ago"] < 1
+        assert result["hours_ago"]["invoices"] < 1
         assert "suggestion" not in result
 
     @patch("bizops.mcp_server.load_config")
@@ -266,9 +266,9 @@ class TestDataFreshness:
 
         result = _data_freshness("invoices")
 
-        assert result["status"] == "missing"
-        assert result["last_synced"] is None
-        assert "sync_gmail" in result["suggestion"]
+        assert result["status"] == "no_data"
+        assert result["hours_ago"]["invoices"] is None
+        assert "suggestion" in result
 
     @patch("bizops.mcp_server.load_config")
     def test_stale_file(self, mock_config, tmp_output_dir):
@@ -287,7 +287,7 @@ class TestDataFreshness:
         result = _data_freshness("invoices")
 
         assert result["status"] == "stale"
-        assert result["hours_ago"] >= 47
+        assert result["hours_ago"]["invoices"] >= 47
         assert "suggestion" in result
 
     @patch("bizops.mcp_server.load_config")
@@ -313,7 +313,7 @@ class TestFreshnessInGetTools:
 
         mock_config.return_value = BizOpsConfig()
         mock_load.return_value = []
-        mock_fresh.return_value = {"status": "stale", "hours_ago": 48}
+        mock_fresh.return_value = {"status": "stale", "hours_ago": {"invoices": 48}}
 
         result = json.loads(get_invoices())
         assert "data_freshness" in result
@@ -330,7 +330,7 @@ class TestFreshnessInGetTools:
             "revenue": {}, "totals": {},
             "expenses_by_category": {"food": [{"amount": 100, "vendor": "X"}]},
         }
-        mock_fresh.return_value = {"status": "fresh", "hours_ago": 1}
+        mock_fresh.return_value = {"status": "fresh", "hours_ago": {"expenses": 1}}
 
         result = json.loads(get_expenses())
         assert "data_freshness" in result
@@ -345,7 +345,7 @@ class TestFreshnessInGetTools:
         mock_load.return_value = [
             {"date": "2026-03-01", "gross_sales": 5000, "net_sales": 4700, "tax": 300, "tips": 400, "total_orders": 120},
         ]
-        mock_fresh.return_value = {"status": "fresh", "hours_ago": 0.5}
+        mock_fresh.return_value = {"status": "fresh", "hours_ago": {"toast": 0.5}}
 
         result = json.loads(get_toast_sales())
         assert "data_freshness" in result
@@ -358,7 +358,7 @@ class TestFreshnessInGetTools:
 
         mock_config.return_value = BizOpsConfig()
         mock_load.return_value = []
-        mock_fresh.return_value = {"status": "missing"}
+        mock_fresh.return_value = {"status": "no_data", "hours_ago": {"bank": None}}
 
         result = json.loads(get_bank_transactions())
         assert "data_freshness" in result

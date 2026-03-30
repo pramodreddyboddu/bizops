@@ -66,7 +66,7 @@ class PaymentEngine:
                     continue
 
             vendor = inv.get("vendor", "Unknown")
-            amount = abs(inv.get("amount", 0))
+            amount = abs(inv.get("amount") or 0)
             inv_date = inv.get("date", "")
 
             if vendor not in vendor_results:

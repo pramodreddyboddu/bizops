@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import json
 import os
+import traceback
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -53,6 +55,110 @@ def _resolve_dates(period: str) -> tuple[str, str]:
     else:  # default: month
         start = today.replace(day=1)
         return start.strftime("%Y-%m-%d"), today.strftime("%Y-%m-%d")
+
+
+def _data_freshness(*data_types: str) -> dict[str, Any]:
+    """Check freshness of data files.  Returns a dict safe to embed in JSON responses.
+
+    Args:
+        data_types: Which data files to check — "invoices", "expenses", "toast",
+                    "bank", "reconciliation", "food_cost", "labor".
+                    If empty, checks invoices + expenses (most common).
+    """
+    config = load_config()
+    data_dir = config.output_dir / "data"
+    now = datetime.now()
+    year_month = now.strftime("%Y-%m")
+
+    if not data_types:
+        data_types = ("invoices", "expenses")
+
+    filenames = {
+        "invoices": f"invoices_{year_month}.json",
+        "expenses": f"expenses_{year_month}.json",
+        "toast": f"toast_{year_month}.json",
+        "bank": f"bank_{year_month}.json",
+        "reconciliation": f"reconciliation_{year_month}.json",
+        "food_cost": f"food_cost_{year_month}.json",
+        "labor": f"labor_{year_month}.json",
+    }
+
+    worst_hours = 0.0
+    details = {}
+
+    for dt in data_types:
+        fn = filenames.get(dt)
+        if not fn:
+            continue
+        fp = data_dir / fn
+        if fp.exists():
+            hours_ago = round((now - datetime.fromtimestamp(fp.stat().st_mtime)).total_seconds() / 3600, 1)
+            worst_hours = max(worst_hours, hours_ago)
+            details[dt] = hours_ago
+        else:
+            worst_hours = 999
+            details[dt] = None  # missing
+
+    if worst_hours < 2:
+        status = "fresh"
+        suggestion = None
+    elif worst_hours < 24:
+        status = "recent"
+        suggestion = None
+    elif worst_hours < 999:
+        status = "stale"
+        suggestion = "Run sync_gmail to get fresh data"
+    else:
+        status = "no_data"
+        suggestion = "Run sync_gmail to pull data from Gmail"
+
+    result: dict[str, Any] = {"status": status, "hours_ago": details}
+    if suggestion:
+        result["suggestion"] = suggestion
+    return result
+
+
+def _with_freshness(json_str: str, *data_types: str) -> str:
+    """Inject data_freshness into an existing JSON response string."""
+    try:
+        data = json.loads(json_str)
+        data["data_freshness"] = _data_freshness(*data_types)
+        return json.dumps(data, default=str, indent=2)
+    except Exception:
+        return json_str
+
+
+# Map tool names to the data types they depend on
+_TOOL_DATA_DEPS: dict[str, tuple[str, ...]] = {
+    "get_invoices": ("invoices",),
+    "get_expenses": ("expenses",),
+    "get_toast_sales": ("toast",),
+    "get_vendor_summary": ("invoices",),
+    "get_pl_summary": ("expenses", "toast"),
+    "get_bank_transactions": ("bank",),
+    "get_reconciliation": ("reconciliation",),
+    "get_cash_flow": ("bank",),
+    "get_food_cost": ("expenses", "toast"),
+    "get_food_cost_trend": ("expenses", "toast"),
+    "get_order_recommendation": ("invoices",),
+    "get_ordering_budget": ("invoices",),
+    "get_product_catalog": (),
+    "get_daily_briefing": ("invoices", "expenses", "toast", "bank"),
+    "get_labor_cost": ("bank", "toast"),
+    "get_labor_trend": ("bank", "toast"),
+    "get_payment_status": ("invoices", "bank"),
+    "get_cash_forecast": ("invoices", "bank", "toast"),
+    "get_pl_trend": ("expenses", "toast"),
+    "get_revenue_forecast": ("toast",),
+    "get_benchmarks": ("expenses", "toast", "bank"),
+    "get_health_score": ("expenses", "toast", "bank", "invoices"),
+    "get_vendor_price_analysis": ("invoices",),
+    "get_waste_estimate": ("invoices", "expenses", "toast"),
+    "get_waste_trend": ("invoices", "expenses", "toast"),
+    "get_inventory_estimate": ("invoices", "toast"),
+    "get_expense_budget_status": ("expenses", "toast"),
+    "get_alerts": ("bank", "toast", "invoices"),
+}
 
 
 # ──────────────────────────────────────────────────────────────
@@ -1082,7 +1188,7 @@ def get_alerts(period: str = "month") -> str:
 
 
 @mcp.tool()
-def sync_gmail(period: str = "week") -> str:
+def sync_gmail(period: str = "week", max_results: int = 50) -> str:
     """Pull fresh invoices and expenses from Gmail — refreshes ALL cached data.
 
     CALL THIS FIRST if data looks stale or the owner asks about recent transactions.
@@ -1094,12 +1200,18 @@ def sync_gmail(period: str = "week") -> str:
 
     Args:
         period: How far back to pull — "today", "week", "month", or "quarter".
+        max_results: Maximum emails to fetch (default 50). Lower = faster.
 
     Returns:
         JSON summary: new invoices found, total count, vendors, date range, expense status.
     """
-    config = load_config()
-    start, end = _resolve_dates(period)
+    SYNC_TIMEOUT = 55  # seconds — must finish before MCP's ~60s limit
+
+    try:
+        config = load_config()
+        start, end = _resolve_dates(period)
+    except Exception as e:
+        return json.dumps({"status": "error", "errors": [f"Setup failed: {e}"]})
 
     result: dict[str, Any] = {
         "period": {"start": start, "end": end},
@@ -1109,12 +1221,29 @@ def sync_gmail(period: str = "week") -> str:
         "errors": [],
     }
 
-    try:
-        # 1. Connect to Gmail and fetch emails
+    def _do_gmail_sync():
+        """Run the Gmail fetch + parse in a thread so we can enforce a timeout."""
         from bizops.connectors.gmail import GmailConnector
 
         gmail = GmailConnector(config)
-        raw_emails = gmail.search_invoices(start_date=start, end_date=end)
+        return gmail.search_invoices(
+            start_date=start, end_date=end, max_results=max_results,
+        )
+
+    try:
+        # 1. Fetch emails with a hard timeout (thread-based, won't kill the server)
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(_do_gmail_sync)
+            try:
+                raw_emails = future.result(timeout=SYNC_TIMEOUT)
+            except FuturesTimeoutError:
+                result["status"] = "error"
+                result["errors"].append(
+                    f"Gmail fetch timed out after {SYNC_TIMEOUT}s. "
+                    f"Try a shorter period or lower max_results (currently {max_results})."
+                )
+                result["synced_at"] = datetime.now().isoformat()
+                return json.dumps(result, default=str, indent=2)
 
         # 2. Parse into structured invoices
         from bizops.parsers.invoice import InvoiceParser
@@ -1176,7 +1305,7 @@ def sync_gmail(period: str = "week") -> str:
         result["errors"].append(f"Gmail credentials not found: {e}. Run 'bizops config setup' first.")
     except Exception as e:
         result["status"] = "error"
-        result["errors"].append(f"Sync failed: {e}")
+        result["errors"].append(f"Sync failed: {e}\n{traceback.format_exc()}")
 
     result["synced_at"] = datetime.now().isoformat()
 
@@ -1346,66 +1475,6 @@ def get_status_resource() -> str:
 # ──────────────────────────────────────────────────────────────
 
 
-def _data_freshness(data_type: str = "invoices") -> dict[str, Any]:
-    """Check freshness of a data file and return a summary dict.
-
-    Args:
-        data_type: One of "invoices", "expenses", "toast", "bank", "reconciliation",
-                   "food_cost", "labor".
-
-    Returns:
-        Dict with last_synced, hours_ago, status, and suggestion.
-    """
-    config = load_config()
-    data_dir = config.output_dir / "data"
-    year_month = datetime.now().strftime("%Y-%m")
-
-    filename_map = {
-        "invoices": f"invoices_{year_month}.json",
-        "expenses": f"expenses_{year_month}.json",
-        "toast": f"toast_{year_month}.json",
-        "bank": f"bank_{year_month}.json",
-        "reconciliation": f"reconciliation_{year_month}.json",
-        "food_cost": f"food_cost_{year_month}.json",
-        "labor": f"labor_{year_month}.json",
-    }
-
-    filename = filename_map.get(data_type, f"{data_type}_{year_month}.json")
-    filepath = data_dir / filename
-
-    if not filepath.exists():
-        return {
-            "last_synced": None,
-            "hours_ago": None,
-            "status": "missing",
-            "suggestion": f"No {data_type} data found. Run sync_gmail to pull fresh data.",
-        }
-
-    mod_time = datetime.fromtimestamp(filepath.stat().st_mtime)
-    hours_ago = round((datetime.now() - mod_time).total_seconds() / 3600, 1)
-
-    if hours_ago < 2:
-        status = "fresh"
-        suggestion = None
-    elif hours_ago < 24:
-        status = "recent"
-        suggestion = None
-    elif hours_ago < 72:
-        status = "stale"
-        suggestion = f"Data is {hours_ago:.0f} hours old. Run sync_gmail to refresh."
-    else:
-        status = "very_stale"
-        suggestion = f"Data is {hours_ago / 24:.0f} days old! Run sync_gmail to get current data."
-
-    result: dict[str, Any] = {
-        "last_synced": mod_time.isoformat(),
-        "hours_ago": hours_ago,
-        "status": status,
-    }
-    if suggestion:
-        result["suggestion"] = suggestion
-    return result
-
 
 def _top_vendors(items: list[dict[str, Any]], limit: int = 5) -> list[dict[str, Any]]:
     """Get the top vendors by spend from a list of invoice items."""
@@ -1424,5 +1493,45 @@ def _top_vendors(items: list[dict[str, Any]], limit: int = 5) -> list[dict[str, 
 #  Entry point
 # ──────────────────────────────────────────────────────────────
 
+def _warmup_gmail_token():
+    """Proactively refresh Gmail token on startup so first sync is instant."""
+    try:
+        from google.auth.transport.requests import Request
+        from google.oauth2.credentials import Credentials
+
+        config = load_config()
+        token_path = config.gmail_token_path
+        if not token_path.exists():
+            return
+        scopes = ["https://www.googleapis.com/auth/gmail.readonly"]
+        creds = Credentials.from_authorized_user_file(str(token_path), scopes)
+        if not creds.valid and creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+            token_path.write_text(creds.to_json())
+    except Exception:
+        pass  # Non-fatal — sync_gmail will surface the real error
+
+
+def _inject_freshness():
+    """Wrap all get_* tools to automatically append data_freshness to responses."""
+    import functools
+
+    tool_mgr = mcp._tool_manager
+    for tool_name, deps in _TOOL_DATA_DEPS.items():
+        if tool_name in tool_mgr._tools:
+            tool = tool_mgr._tools[tool_name]
+            original_fn = tool.fn
+
+            @functools.wraps(original_fn)
+            def _wrapper(*args, _orig=original_fn, _deps=deps, **kwargs):
+                result = _orig(*args, **kwargs)
+                return _with_freshness(result, *_deps)
+
+            tool.fn = _wrapper
+
+
 if __name__ == "__main__":
+    os.environ.setdefault("MCP_SERVER", "1")
+    _warmup_gmail_token()
+    _inject_freshness()
     mcp.run()

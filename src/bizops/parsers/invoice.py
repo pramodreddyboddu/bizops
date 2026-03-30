@@ -34,18 +34,46 @@ class InvoiceParser:
         body = email.get("body", "")
         subject = email.get("subject", "")
         combined_text = f"{subject}\n{body}"
+        subject_lower = subject.lower()
 
-        # Extract amount
-        amount = self._extract_amount(combined_text)
-
-        # Detect payment status
-        status = self._detect_status(combined_text)
-
-        # Extract invoice number if present
-        invoice_number = self._extract_invoice_number(combined_text)
-
-        # Determine category from vendor config
         vendor_name = email.get("vendor", "Unknown")
+
+        # ── DoorDash-specific handling ──
+        # "DoorDash Payment to" = gross sales summary (order, informational)
+        # "Your DoorDash payment" = actual bank deposit (deposit, real money)
+        if "doordash payment to" in subject_lower:
+            amount = self._extract_doordash_payout(body)
+            return {
+                "date": email.get("date", ""),
+                "vendor": "DoorDash",
+                "amount": amount,
+                "status": "informational",
+                "category": "order",
+                "invoice_number": None,
+                "subject": subject,
+                "source_email": email.get("sender", ""),
+                "message_id": email.get("message_id", ""),
+                "has_attachment": len(email.get("attachments", [])) > 0,
+            }
+        if "your doordash payment" in subject_lower:
+            amount = self._extract_doordash_payout(body)
+            return {
+                "date": email.get("date", ""),
+                "vendor": "DoorDash",
+                "amount": amount,
+                "status": "deposited",
+                "category": "deposit",
+                "invoice_number": None,
+                "subject": subject,
+                "source_email": email.get("sender", ""),
+                "message_id": email.get("message_id", ""),
+                "has_attachment": len(email.get("attachments", [])) > 0,
+            }
+
+        # ── General invoice parsing ──
+        amount = self._extract_amount(combined_text)
+        status = self._detect_status(combined_text)
+        invoice_number = self._extract_invoice_number(combined_text)
         category = self._get_vendor_category(vendor_name)
 
         return {
@@ -60,6 +88,24 @@ class InvoiceParser:
             "message_id": email.get("message_id", ""),
             "has_attachment": len(email.get("attachments", [])) > 0,
         }
+
+    def _extract_doordash_payout(self, body: str) -> float | None:
+        """Extract the payout amount from a DoorDash email.
+
+        Looks specifically for "payment of $X" or "receive a payment of $X"
+        to avoid grabbing marketing numbers like cash advance offers.
+        """
+        match = re.search(
+            r"(?:receive\s+)?(?:a\s+)?payment\s+of\s+\$\s*([\d,]+\.?\d{0,2})",
+            body,
+            re.IGNORECASE,
+        )
+        if match:
+            try:
+                return round(float(match.group(1).replace(",", "")), 2)
+            except ValueError:
+                pass
+        return None
 
     def _extract_amount(self, text: str) -> float | None:
         """Extract the most likely invoice amount from text.

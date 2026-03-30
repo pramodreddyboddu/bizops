@@ -95,3 +95,71 @@ class TestVendorCategory:
 
     def test_unknown_vendor(self, parser):
         assert parser._get_vendor_category("Random Vendor") == "uncategorized"
+
+
+class TestDoorDashParsing:
+    """DoorDash emails need special handling per CLAUDE.md rules:
+    - "DoorDash Payment to" = gross sales summary (order, informational)
+    - "Your DoorDash payment" = actual bank deposit (deposit, real money)
+    """
+
+    def _email(self, subject, body=""):
+        return {
+            "subject": subject,
+            "body": body,
+            "sender": "DoorDash for Merchants <no-reply@doordash.com>",
+            "vendor": "DoorDash",
+            "date": "2026-03-22",
+            "message_id": "test123",
+            "attachments": [],
+        }
+
+    def test_payment_to_is_order(self, parser):
+        email = self._email(
+            "DoorDash Payment to Desi Delight (W Princeton Dr) (Princeton) for 03/17/2026 to 03/22/2026",
+            "You will receive a payment of $815.42.",
+        )
+        inv = parser._parse_single(email)
+        assert inv["category"] == "order"
+        assert inv["status"] == "informational"
+        assert inv["amount"] == 815.42
+
+    def test_your_doordash_payment_is_deposit(self, parser):
+        email = self._email(
+            "Your DoorDash payment for Desi Delight (W Princeton Dr) (03/17/2026 – 03/22/2026)*",
+            "You are expected to receive a payment of $815.42.",
+        )
+        inv = parser._parse_single(email)
+        assert inv["category"] == "deposit"
+        assert inv["status"] == "deposited"
+        assert inv["amount"] == 815.42
+
+    def test_doordash_ignores_cash_advance_amount(self, parser):
+        """The $16,000 cash advance offer in the email body must NOT be extracted."""
+        body = (
+            "You will receive a payment of $815.42.\n"
+            "your store may be eligible for a cash advance of up to $16,000."
+        )
+        email = self._email(
+            "DoorDash Payment to Desi Delight (W Princeton Dr) (Princeton) for 03/17/2026",
+            body,
+        )
+        inv = parser._parse_single(email)
+        assert inv["amount"] == 815.42  # NOT 16000
+
+    def test_doordash_payout_extraction_variants(self, parser):
+        assert parser._extract_doordash_payout("You will receive a payment of $1,262.09.") == 1262.09
+        assert parser._extract_doordash_payout("receive a payment of $815.42.*") == 815.42
+        assert parser._extract_doordash_payout("payment of $123.45") == 123.45
+
+    def test_doordash_payout_no_match(self, parser):
+        assert parser._extract_doordash_payout("No payout here") is None
+        assert parser._extract_doordash_payout("cash advance of up to $16,000") is None
+
+    def test_doordash_vendor_always_set(self, parser):
+        email = self._email(
+            "DoorDash Payment to Desi Delight",
+            "payment of $500.00",
+        )
+        inv = parser._parse_single(email)
+        assert inv["vendor"] == "DoorDash"

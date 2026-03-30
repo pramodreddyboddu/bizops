@@ -37,14 +37,19 @@ class GmailConnector:
 
         Expects credentials.json from Google Cloud Console.
         Token is cached at config.gmail_token_path for subsequent runs.
+
+        When running headless (MCP server), browser-based OAuth is skipped —
+        a pre-existing token with a valid refresh_token is required.
         """
+        import os
+
         from google.auth.transport.requests import Request
         from google.oauth2.credentials import Credentials
-        from google_auth_oauthlib.flow import InstalledAppFlow
         from googleapiclient.discovery import build
 
         creds = None
         token_path = self.config.gmail_token_path
+        headless = bool(os.environ.get("MCP_SERVER") or not os.isatty(0))
 
         # Load existing token
         if token_path.exists():
@@ -53,8 +58,22 @@ class GmailConnector:
         # Refresh or create new credentials
         if not creds or not creds.valid:
             if creds and creds.expired and creds.refresh_token:
-                creds.refresh(Request())
+                try:
+                    creds.refresh(Request())
+                except Exception as e:
+                    raise RuntimeError(
+                        f"Gmail token refresh failed: {e}. "
+                        "Run 'bizops config setup' interactively to re-authorize."
+                    ) from e
+            elif headless:
+                raise RuntimeError(
+                    "Gmail requires interactive OAuth login but running headless (MCP server). "
+                    "Run 'bizops config setup' in a terminal first to authorize, "
+                    "then restart the MCP server."
+                )
             else:
+                from google_auth_oauthlib.flow import InstalledAppFlow
+
                 if not self.config.gmail_credentials_path.exists():
                     raise FileNotFoundError(
                         f"Gmail credentials not found at {self.config.gmail_credentials_path}. "
@@ -66,7 +85,7 @@ class GmailConnector:
                 )
                 creds = flow.run_local_server(port=0)
 
-            # Save token for next run
+            # Save refreshed/new token for next run
             token_path.parent.mkdir(parents=True, exist_ok=True)
             token_path.write_text(creds.to_json())
 
